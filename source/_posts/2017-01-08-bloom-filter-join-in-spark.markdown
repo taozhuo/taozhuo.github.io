@@ -47,5 +47,5 @@ Bloom filter is a probabilistic data structure:
 {% endcodeblock %}
 
 ... which is shown in the screenshot below:
-{% img /source/assets/screenshot.png %}
+[Link!]({{ root_url }} /source/assets/screenshot.png )
 
