@@ -4,7 +4,7 @@
   <title><![CDATA[My Octopress Blog]]></title>
   <link href="http://taozhuo.github.io/atom.xml" rel="self"/>
   <link href="http://taozhuo.github.io/"/>
-  <updated>2017-01-08T14:41:59-08:00</updated>
+  <updated>2017-01-08T14:44:59-08:00</updated>
   <id>http://taozhuo.github.io/</id>
   <author>
     <name><![CDATA[Your Name]]></name>
@@ -73,7 +73,7 @@
 
 
 <p>&hellip; which is shown in the screenshot below:
-<img src="http://taozhuo.github.io/source/assets/screenshot.png" alt="My helpful screenshot" /></p>
+<img src="http://taozhuo.github.io/source/assets/screenshot.png"></p>
 ]]></content>
   </entry>
   
