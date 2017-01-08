@@ -4,7 +4,7 @@
   <title><![CDATA[My Octopress Blog]]></title>
   <link href="http://taozhuo.github.io/atom.xml" rel="self"/>
   <link href="http://taozhuo.github.io/"/>
-  <updated>2017-01-08T14:31:33-08:00</updated>
+  <updated>2017-01-08T14:35:37-08:00</updated>
   <id>http://taozhuo.github.io/</id>
   <author>
     <name><![CDATA[Your Name]]></name>
@@ -12,5 +12,68 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Bloom-filter Join in Spark]]></title>
+    <link href="http://taozhuo.github.io/blog/2017/01/08/bloom-filter-join-in-spark/"/>
+    <updated>2017-01-08T14:33:32-08:00</updated>
+    <id>http://taozhuo.github.io/blog/2017/01/08/bloom-filter-join-in-spark</id>
+    <content type="html"><![CDATA[<p>Bloom filter is a probabilistic data structure:</p>
+
+<div><script src='https://gist.github.com/0e1d5cfa21c60ffd221ba4f133acd52c.js'></script>
+<noscript><pre><code>  def main(args: Array[String]) {
+    val sparkSession: SparkSession = SparkSession.builder.appName(&quot;join-pair-features&quot;).getOrCreate()
+    val sc = sparkSession.sparkContext
+    Logger.getLogger(&quot;org&quot;).setLevel(Level.ERROR)
+    Logger.getLogger(&quot;akka&quot;).setLevel(Level.ERROR)
+
+    //increase hdfs time out
+    sc.hadoopConfiguration.set(&quot;dfs.client.socket-timeout&quot;, &quot;6000000&quot;)
+    sc.hadoopConfiguration.set(&quot;dfs.datanode.socket.write.timeout&quot;, &quot;6000000&quot;)
+
+    val leftID = args(0)      //join user feature output for pid
+    val rithtID = args(1)     //join user feature output for sid
+    val inputPair = args(2)   //gpairing post-process output
+    val outputType = args(3)  //cookie-cookie, dev-cookie, dev-dev
+    val outputPath = args(4)
+
+    val avroRDDLeft: RDD[Pair[_, _]] = sc.newAPIHadoopFile(leftID, classOf[AvroKeyInputFormat[GenericRecord]],
+      classOf[AvroKey[GenericRecord]],classOf[NullWritable])
+      .map(_._1.datum().asInstanceOf[Pair[_,_]])
+    val avroRDDRight: RDD[Pair[_, _]] = sc.newAPIHadoopFile(rithtID, classOf[AvroKeyInputFormat[GenericRecord]],
+      classOf[AvroKey[GenericRecord]],classOf[NullWritable])
+      .map(_._1.datum().asInstanceOf[Pair[_,_]])
+
+    import sparkSession.implicits._
+    //case class GPairOut(id1: String, id2: String, pt: Int, score: Double, id1dDeviceType: String, id2DeviceType: String, rank: Int)
+
+    val pairDS = sparkSession.read.parquet(inputPair).as[GPairOut]
+        .map { x=&gt;
+          if (x.id1.startsWith(&quot;uuid&quot;) &amp;&amp; !x.id2.startsWith(&quot;uuid&quot;))
+            GPairOut(x.id2, x.id1, x.pt, x.score, x.id2DeviceType, x.id1dDeviceType, x.rank)
+          else x
+        }.filter(x=&gt;validPair(x.id1, x.id2, outputType))
+
+    val left: Dataset[FeatureDS] = AvroToDataSet(sparkSession, avroRDDLeft, &quot;pid-&quot;)
+    val right: Dataset[FeatureDS] = AvroToDataSet(sparkSession, avroRDDRight, &quot;sid-&quot;)
+
+    //val left: Dataset[FeatureDS] = sparkSession.read.parquet(&quot;temp/join-pair-feature-left&quot;).as[FeatureDS]
+    //val right : Dataset[FeatureDS] = sparkSession.read.parquet(&quot;temp/join-pair-feature-right&quot;).as[FeatureDS]
+
+    val joined1 = left.joinWith(pairDS, $&quot;idLeft&quot; === $&quot;id1&quot;).map{ case (leftFeature, pair) =&gt;
+      (pair.id2, pair, leftFeature)
+    }
+
+    right.joinWith(joined1 , $&quot;idLeft&quot; === $&quot;_1&quot;).map { case (rightFeature, tuple3) =&gt;
+      combineFeatures(tuple3._3, rightFeature, tuple3._2)   //combine leftFeature and rightFeature
+    }.write.mode(SaveMode.Overwrite).partitionBy(&quot;folderName&quot;).parquet(outputPath + &quot;/&quot; + outputType)
+  }
+}
+</code></pre></noscript></div>
+
+
+
+]]></content>
+  </entry>
   
 </feed>
