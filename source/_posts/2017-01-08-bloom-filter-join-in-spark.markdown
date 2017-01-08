@@ -11,5 +11,5 @@ Bloom filter is a probabilistic data structure:
 {% gist 0e1d5cfa21c60ffd221ba4f133acd52c %}
 
 ... which is shown in the screenshot below:
-![My helpful screenshot](/source/assets/screenshot.png)
+{% img /source/assets/screenshot.png %}
 
