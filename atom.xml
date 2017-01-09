@@ -4,7 +4,7 @@
   <title><![CDATA[My Octopress Blog]]></title>
   <link href="http://taozhuo.github.io/atom.xml" rel="self"/>
   <link href="http://taozhuo.github.io/"/>
-  <updated>2017-01-08T14:58:40-08:00</updated>
+  <updated>2017-01-08T16:15:13-08:00</updated>
   <id>http://taozhuo.github.io/</id>
   <author>
     <name><![CDATA[Your Name]]></name>
@@ -18,7 +18,13 @@
     <link href="http://taozhuo.github.io/blog/2017/01/08/bloom-filter-join-in-spark/"/>
     <updated>2017-01-08T14:33:32-08:00</updated>
     <id>http://taozhuo.github.io/blog/2017/01/08/bloom-filter-join-in-spark</id>
-    <content type="html"><![CDATA[<p>Bloom filter is a probabilistic data structure:</p>
+    <content type="html"><![CDATA[<p>When it comes to join optimization techniques, map-side(broadcast) join is an obvious candidate, however it doesn&rsquo;t work when the data set is not small enough to fit into memory. But we can extend this approach if we find a representation of the data set that is small, e.g. Bloom filter.</p>
+
+<p>A Bloom filter is a space-efficient probabilistic data structure used to test whether a member is an element of a set.</p>
+
+<p>Implementation of Bloom filter in MapReduce is cumbersome in that you have to explicitly use DistributedCache, and and write a lot of boilerplate code that handles file system I/O when writing it to HDFS and read it back in second stage. Spark has a nice feature called Broadcast Variables that saves you a lot of effort, and allows you to distribute the data using efficient broadcast algorithms to reduce communication cost.</p>
+
+<p>We don&rsquo;t need to write our own Bloom filter from scratch, instead we can use <strong>org.apache.spark.util.sketch.BloomFilter</strong> which is largely based on Google&rsquo;s Guava. Under the hood it&rsquo;s a <strong>long[]</strong> representing a bit array, it has the advantage over other implementation that the number of inserted bits can be larger than 4bn.</p>
 
 <figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
 <span class='line-number'>2</span>
@@ -36,65 +42,26 @@
 <span class='line-number'>14</span>
 <span class='line-number'>15</span>
 <span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-<span class='line-number'>24</span>
-<span class='line-number'>25</span>
-<span class='line-number'>26</span>
-<span class='line-number'>27</span>
-<span class='line-number'>28</span>
-<span class='line-number'>29</span>
-<span class='line-number'>30</span>
-<span class='line-number'>31</span>
-<span class='line-number'>32</span>
-<span class='line-number'>33</span>
-<span class='line-number'>34</span>
-<span class='line-number'>35</span>
-</pre></td><td class='code'><pre><code class='scala'><span class='line'>  <span class="k">def</span> <span class="n">main</span><span class="o">(</span><span class="n">args</span><span class="k">:</span> <span class="kt">Array</span><span class="o">[</span><span class="kt">String</span><span class="o">])</span> <span class="o">{</span>
-</span><span class='line'>    <span class="k">val</span> <span class="n">conf</span> <span class="k">=</span> <span class="k">new</span> <span class="nc">SparkConf</span><span class="o">().</span><span class="n">setAppName</span><span class="o">(</span><span class="s">&quot;bloom-filter-join&quot;</span><span class="o">)</span>
-</span><span class='line'>    <span class="k">val</span> <span class="n">sc</span> <span class="k">=</span> <span class="k">new</span> <span class="nc">SparkContext</span><span class="o">(</span><span class="n">conf</span><span class="o">)</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'><span class="c1">// 1a. create bloom filters for smaller data locally on each partition</span>
+</span><span class='line'><span class="c1">// 1b. merge them in driver</span>
+</span><span class='line'><span class="k">val</span> <span class="n">bf</span> <span class="k">=</span> <span class="n">smallRDD</span><span class="o">.</span><span class="n">mapPartitions</span> <span class="o">{</span> <span class="n">iter</span> <span class="k">=&gt;</span>
+</span><span class='line'>  <span class="k">val</span> <span class="n">b</span> <span class="k">=</span> <span class="nc">BloomFilter</span><span class="o">.</span><span class="n">create</span><span class="o">(</span><span class="n">cnt</span><span class="o">,</span> <span class="mf">0.1</span><span class="o">)</span>  <span class="c1">//false positive probability=0.1</span>
+</span><span class='line'>  <span class="n">iter</span><span class="o">.</span><span class="n">foreach</span><span class="o">(</span><span class="n">i</span> <span class="k">=&gt;</span> <span class="n">b</span><span class="o">.</span><span class="n">putString</span><span class="o">(</span><span class="n">i</span><span class="o">.</span><span class="n">_1</span><span class="o">))</span>
+</span><span class='line'>  <span class="nc">Iterator</span><span class="o">(</span><span class="n">b</span><span class="o">)</span>
+</span><span class='line'><span class="o">}.</span><span class="n">reduce</span><span class="o">((</span><span class="n">x</span><span class="o">,</span><span class="n">y</span><span class="o">)</span> <span class="k">=&gt;</span> <span class="n">x</span><span class="o">.</span><span class="n">mergeInPlace</span><span class="o">(</span><span class="n">y</span><span class="o">))</span>
 </span><span class='line'>
-</span><span class='line'>    <span class="c1">//val rootLogger = Logger.getRootLogger()</span>
-</span><span class='line'>    <span class="c1">//rootLogger.setLevel(Level.DEBUG)</span>
+</span><span class='line'><span class="c1">// 2. driver broadcasts bloom-filter</span>
+</span><span class='line'><span class="n">sc</span><span class="o">.</span><span class="n">broadcast</span><span class="o">(</span><span class="n">bf</span><span class="o">)</span>
 </span><span class='line'>
-</span><span class='line'>    <span class="c1">//big file schema: date, uuid1, uuid2 .....</span>
-</span><span class='line'>    <span class="k">val</span> <span class="n">bigFile</span> <span class="k">=</span> <span class="n">sc</span><span class="o">.</span><span class="n">newAPIHadoopFile</span><span class="o">(</span><span class="n">args</span><span class="o">(</span><span class="mi">0</span><span class="o">),</span> <span class="n">classOf</span><span class="o">[</span><span class="kt">com.hadoop.mapreduce.LzoTextInputFormat</span><span class="o">],</span>
-</span><span class='line'>      <span class="n">classOf</span><span class="o">[</span><span class="kt">org.apache.hadoop.io.LongWritable</span><span class="o">],</span><span class="n">classOf</span><span class="o">[</span><span class="kt">org.apache.hadoop.io.Text</span><span class="o">])</span>
-</span><span class='line'>    <span class="k">val</span> <span class="n">bigRDD</span><span class="k">:</span> <span class="kt">RDD</span><span class="o">[(</span><span class="kt">String</span>, <span class="kt">String</span><span class="o">)]</span> <span class="k">=</span> <span class="n">bigFile</span><span class="o">.</span><span class="n">map</span><span class="o">(</span><span class="k">_</span><span class="o">.</span><span class="n">_2</span><span class="o">.</span><span class="n">toString</span><span class="o">).</span><span class="n">map</span><span class="o">(</span><span class="n">x</span><span class="o">=&gt;(</span><span class="n">x</span><span class="o">.</span><span class="n">split</span><span class="o">(</span><span class="s">&quot;\t&quot;</span><span class="o">)(</span><span class="mi">1</span><span class="o">),</span> <span class="n">x</span><span class="o">.</span><span class="n">split</span><span class="o">(</span><span class="s">&quot;\t&quot;</span><span class="o">)(</span><span class="mi">2</span><span class="o">)))</span>
+</span><span class='line'><span class="c1">// 3. use bloom-filter to filter big data set</span>
+</span><span class='line'><span class="k">val</span> <span class="n">filtered</span><span class="k">=</span> <span class="n">bigRDD</span><span class="o">.</span><span class="n">filter</span><span class="o">(</span><span class="n">x</span> <span class="k">=&gt;</span> <span class="n">bf</span><span class="o">.</span><span class="n">mightContain</span><span class="o">(</span><span class="n">x</span><span class="o">.</span><span class="n">_1</span><span class="o">)</span> <span class="o">&amp;&amp;</span> <span class="n">bf</span><span class="o">.</span><span class="n">mightContain</span><span class="o">(</span><span class="n">x</span><span class="o">.</span><span class="n">_2</span><span class="o">))</span>
 </span><span class='line'>
-</span><span class='line'>    <span class="c1">//small file schema: id, pfc</span>
-</span><span class='line'>    <span class="k">val</span> <span class="n">smallFile</span> <span class="k">=</span> <span class="n">sc</span><span class="o">.</span><span class="n">newAPIHadoopFile</span><span class="o">(</span><span class="n">args</span><span class="o">(</span><span class="mi">1</span><span class="o">),</span> <span class="n">classOf</span><span class="o">[</span><span class="kt">com.hadoop.mapreduce.LzoTextInputFormat</span><span class="o">],</span>
-</span><span class='line'>      <span class="n">classOf</span><span class="o">[</span><span class="kt">org.apache.hadoop.io.LongWritable</span><span class="o">],</span><span class="n">classOf</span><span class="o">[</span><span class="kt">org.apache.hadoop.io.Text</span><span class="o">])</span>
-</span><span class='line'>    <span class="k">val</span> <span class="n">smallRDD</span> <span class="k">=</span> <span class="n">smallFile</span><span class="o">.</span><span class="n">map</span><span class="o">(</span><span class="k">_</span><span class="o">.</span><span class="n">_2</span><span class="o">.</span><span class="n">toString</span><span class="o">).</span><span class="n">map</span><span class="o">(</span><span class="n">x</span><span class="o">=&gt;(</span><span class="n">x</span><span class="o">.</span><span class="n">split</span><span class="o">(</span><span class="s">&quot;\t&quot;</span><span class="o">)(</span><span class="mi">0</span><span class="o">),</span> <span class="mi">1</span><span class="o">))</span>
-</span><span class='line'>    <span class="k">val</span> <span class="n">cnt</span><span class="k">:</span><span class="kt">Long</span> <span class="o">=</span> <span class="n">smallRDD</span><span class="o">.</span><span class="n">count</span><span class="o">()</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="c1">// 1a. create bloom filters for smaller data locally on each partition</span>
-</span><span class='line'>    <span class="c1">// 1b. merge them in driver</span>
-</span><span class='line'>    <span class="k">val</span> <span class="n">bf</span> <span class="k">=</span> <span class="n">smallRDD</span><span class="o">.</span><span class="n">mapPartitions</span> <span class="o">{</span> <span class="n">iter</span> <span class="k">=&gt;</span>
-</span><span class='line'>      <span class="k">val</span> <span class="n">b</span> <span class="k">=</span> <span class="nc">BloomFilter</span><span class="o">.</span><span class="n">create</span><span class="o">(</span><span class="n">cnt</span><span class="o">,</span> <span class="mf">0.1</span><span class="o">)</span>  <span class="c1">//false positive probability=0.1</span>
-</span><span class='line'>      <span class="n">iter</span><span class="o">.</span><span class="n">foreach</span><span class="o">(</span><span class="n">i</span> <span class="k">=&gt;</span> <span class="n">b</span><span class="o">.</span><span class="n">putString</span><span class="o">(</span><span class="n">i</span><span class="o">.</span><span class="n">_1</span><span class="o">))</span>
-</span><span class='line'>      <span class="nc">Iterator</span><span class="o">(</span><span class="n">b</span><span class="o">)</span>
-</span><span class='line'>    <span class="o">}.</span><span class="n">reduce</span><span class="o">((</span><span class="n">x</span><span class="o">,</span><span class="n">y</span><span class="o">)</span> <span class="k">=&gt;</span> <span class="n">x</span><span class="o">.</span><span class="n">mergeInPlace</span><span class="o">(</span><span class="n">y</span><span class="o">))</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="c1">// 2. driver broadcasts bloom-filter</span>
-</span><span class='line'>    <span class="n">sc</span><span class="o">.</span><span class="n">broadcast</span><span class="o">(</span><span class="n">bf</span><span class="o">)</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="c1">// 3. use bloom-filter to filter big data set</span>
-</span><span class='line'>    <span class="k">val</span> <span class="n">filtered</span><span class="k">=</span> <span class="n">bigRDD</span><span class="o">.</span><span class="n">filter</span><span class="o">(</span><span class="n">x</span> <span class="k">=&gt;</span> <span class="n">bf</span><span class="o">.</span><span class="n">mightContain</span><span class="o">(</span><span class="n">x</span><span class="o">.</span><span class="n">_1</span><span class="o">)</span> <span class="o">&amp;&amp;</span> <span class="n">bf</span><span class="o">.</span><span class="n">mightContain</span><span class="o">(</span><span class="n">x</span><span class="o">.</span><span class="n">_2</span><span class="o">))</span>
-</span><span class='line'>
-</span><span class='line'>    <span class="c1">// 4. join big data set and small data set</span>
-</span><span class='line'>    <span class="n">filtered</span><span class="o">.</span><span class="n">join</span><span class="o">(</span><span class="n">smallRDD</span><span class="o">).</span><span class="n">saveAsTextFile</span><span class="o">(</span><span class="n">args</span><span class="o">(</span><span class="mi">2</span><span class="o">))</span>
-</span><span class='line'>  <span class="o">}</span>
+</span><span class='line'><span class="c1">// 4. join big data set and small data set</span>
+</span><span class='line'><span class="n">filtered</span><span class="o">.</span><span class="n">join</span><span class="o">(</span><span class="n">smallRDD</span><span class="o">).</span><span class="n">saveAsTextFile</span><span class="o">(</span><span class="n">args</span><span class="o">(</span><span class="mi">2</span><span class="o">))</span>
 </span></code></pre></td></tr></table></div></figure>
 
 
-<p>&hellip; which is shown in the screenshot below:
-<img class="left" src="http://taozhuo.github.io/images/screenshot.png" width="350" height="350" title="image" alt="images"></p>
+
 ]]></content>
   </entry>
   
