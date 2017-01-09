@@ -6,13 +6,13 @@ comments: true
 categories: 
 ---
 
-When it comes to join optimization techniques, map-side(broadcast) join is an obvious candidate, however it doesn't work when the data set is not small enough to fit into memory. But we can extend this approach if we find a representation of the data set that is small, e.g. Bloom filter.
+When it comes to join optimization techniques, map-side(broadcast) join is an obvious candidate. However it doesn't work when the data set is not small enough to fit into memory. But we can extend this approach if we find a representation of the data set that is small, e.g. a Bloom filter.
 
 A Bloom filter is a space-efficient probabilistic data structure used to test whether a member is an element of a set(<10 bits per element are required for a 1% false positive rate). Recently I ported a job from Apache Pig to Spark which gained significant speedup by using Bloom filter. This job joins 60 days of mobile-device pairs to cookies from a partner. 
 
 The optimized join goes like this: first build partial Bloom filters in each partition of smaller data, which can be done using `mapPartitions` in Spark. They are collected into driver node and merged into a full Bloom filter, which is then distributed to all executors and used to filter out large portions of the data that will not find a match when joined.
 
-Implementation of Bloom filter in MapReduce is cumbersome in that you have to explicitly use `DistributedCache`, and and write a lot of boilerplate code that handles file system I/O when writing it to HDFS and read it back later. Mapper(container) with only one cpu core is also inefficient when the filter is large. While `MultithreadedMapper` is possible, it's difficult to write code that is thread-safe. Spark's executor is a thread-pool by design, you can easily assign many cpu cores to an executor. And Spark has a nice feature called Broadcast Variables that saves you a lot of effort, allowing you to distribute large data using efficient BitTorrent-like algorithms to reduce communication cost.
+Implementation of Bloom filter in MapReduce is cumbersome in that you have to explicitly use `DistributedCache`, and write a lot of boilerplate code that handles file system I/O when writing it to HDFS and read it back later. Mapper(container) with only one cpu core is also inefficient when the filter is large. While `MultithreadedMapper` is possible, it's difficult to write code that is thread-safe. Spark's executor is a thread-pool by design, so you can easily assign many cpu cores to an executor. And Spark has a nice feature called Broadcast Variables that saves you a lot of effort, allowing you to distribute large data using efficient BitTorrent-like algorithms to reduce communication cost.
 
 The good news is we don't need to write our own Bloom filter from scratch, instead we can use `org.apache.spark.util.sketch.BloomFilter` that is largely based on Google's Guava library. Under the hood it's a `long[]` representing a bit array, it has the advantage over other implementation in that the number of inserted bits can be larger than 4bn.
 
@@ -43,7 +43,7 @@ filtered.join(smallRDD).saveAsTextFile(args(2))
 {% endcodeblock %}
 
 
-In order for this to run on the Hadoop cluster, we need to set sufficiently large memory on both driver and executors to hold the underlying bit array, depending on the value of false positive probability we've set above.  In addition we need to increase the maximum allowable size of Kryo serialization buffer, otherwise we'll see exceptions from Kryo:
+In order for this to run on the Hadoop cluster, we need to set sufficiently large memory on both driver and executors to hold the underlying bit array, depending on the value of false positive probability we've set above. And we need to increase the maximum allowable size of Kryo serialization buffer, otherwise we'll see exceptions from Kryo:
 
 {% codeblock lang:scala %}
 
@@ -55,9 +55,9 @@ spark.kryoserializer.buffer.max  512m
  --executor-cores 8 \
 {% endcodeblock %}
 
-I run a test on the job I mentioned above. Simply counting the number of records in each stage shows >90% savings in shuffle size!
+I ran a test on the job I mentioned above. Simply counting the number of records in each stage shows >90% savings in shuffle size!
 
- 	Smarll data set: 244,071,770 records
+ 	Small data set: 244,071,770 records
 	Big data set: 42,504,945,562 records
     After filtered: 1,587,344,750 records
     After joined: 697,421,722 records
