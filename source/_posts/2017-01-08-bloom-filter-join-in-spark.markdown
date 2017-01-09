@@ -15,6 +15,12 @@ Implementation of Bloom filter in MapReduce is cumbersome in that you have to ex
 We don't need to write our own Bloom filter from scratch, instead we can use **org.apache.spark.util.sketch.BloomFilter** which is largely based on Google's Guava. Under the hood it's a **long[]** representing a bit array, it has the advantage over other implementation that the number of inserted bits can be larger than 4bn.
 
 {% codeblock lang:scala %}
+import org.apache.spark.util.sketch.BloomFilter
+
+//reading files
+val bigRDD = ...
+val smallRDD = ...
+val cnt:Long = smallRDD.count()
 
 // 1a. create bloom filters for smaller data locally on each partition
 // 1b. merge them in driver
@@ -32,8 +38,18 @@ val filtered= bigRDD.filter(x => bf.mightContain(x._1) && bf.mightContain(x._2))
 
 // 4. join big data set and small data set
 filtered.join(smallRDD).saveAsTextFile(args(2))
-
-
 {% endcodeblock %}
 
+
+In order for this to run on the Hadoop cluster, we need to set sufficiently large memory on both driver and executors to hold the underlying bit array, depending on the value of false positive probability we've set above.  In addition we need to increase the maximum allowable size of Kryo serialization buffer, otherwise we'll see exceptions from Kryo:
+
+{% codeblock lang:scala %}
+
+spark.kryoserializer.buffer.max  512m
+ --driver-memory 100g \
+ --driver-cores 24 \
+ --num-executors 130 \
+ --executor-memory 50g \
+ --executor-cores 8 \
+{% endcodeblock %}
 
