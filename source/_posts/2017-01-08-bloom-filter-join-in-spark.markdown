@@ -6,47 +6,34 @@ comments: true
 categories: 
 ---
 
-Bloom filter is a probabilistic data structure:
+When it comes to join optimization techniques, map-side(broadcast) join is an obvious candidate, however it doesn't work when the data set is not small enough to fit into memory. But we can extend this approach if we find a representation of the data set that is small, e.g. Bloom filter.
+
+A Bloom filter is a space-efficient probabilistic data structure used to test whether a member is an element of a set.
+
+Implementation of Bloom filter in MapReduce is cumbersome in that you have to explicitly use DistributedCache, and and write a lot of boilerplate code that handles file system I/O when writing it to HDFS and read it back in second stage. Spark has a nice feature called Broadcast Variables that saves you a lot of effort, and allows you to distribute the data using efficient broadcast algorithms to reduce communication cost.
+
+We don't need to write our own Bloom filter from scratch, instead we can use **org.apache.spark.util.sketch.BloomFilter** which is largely based on Google's Guava. Under the hood it's a **long[]** representing a bit array, it has the advantage over other implementation that the number of inserted bits can be larger than 4bn.
 
 {% codeblock lang:scala %}
-  def main(args: Array[String]) {
-    val conf = new SparkConf().setAppName("bloom-filter-join")
-    val sc = new SparkContext(conf)
 
-    //val rootLogger = Logger.getRootLogger()
-    //rootLogger.setLevel(Level.DEBUG)
+// 1a. create bloom filters for smaller data locally on each partition
+// 1b. merge them in driver
+val bf = smallRDD.mapPartitions { iter =>
+  val b = BloomFilter.create(cnt, 0.1)  //false positive probability=0.1
+  iter.foreach(i => b.putString(i._1))
+  Iterator(b)
+}.reduce((x,y) => x.mergeInPlace(y))
 
-    //big file schema: date, uuid1, uuid2 .....
-    val bigFile = sc.newAPIHadoopFile(args(0), classOf[com.hadoop.mapreduce.LzoTextInputFormat],
-      classOf[org.apache.hadoop.io.LongWritable],classOf[org.apache.hadoop.io.Text])
-    val bigRDD: RDD[(String, String)] = bigFile.map(_._2.toString).map(x=>(x.split("\t")(1), x.split("\t")(2)))
+// 2. driver broadcasts bloom-filter
+sc.broadcast(bf)
 
-    //small file schema: id, pfc
-    val smallFile = sc.newAPIHadoopFile(args(1), classOf[com.hadoop.mapreduce.LzoTextInputFormat],
-      classOf[org.apache.hadoop.io.LongWritable],classOf[org.apache.hadoop.io.Text])
-    val smallRDD = smallFile.map(_._2.toString).map(x=>(x.split("\t")(0), 1))
-    val cnt:Long = smallRDD.count()
+// 3. use bloom-filter to filter big data set
+val filtered= bigRDD.filter(x => bf.mightContain(x._1) && bf.mightContain(x._2))
 
-    // 1a. create bloom filters for smaller data locally on each partition
-    // 1b. merge them in driver
-    val bf = smallRDD.mapPartitions { iter =>
-      val b = BloomFilter.create(cnt, 0.1)  //false positive probability=0.1
-      iter.foreach(i => b.putString(i._1))
-      Iterator(b)
-    }.reduce((x,y) => x.mergeInPlace(y))
+// 4. join big data set and small data set
+filtered.join(smallRDD).saveAsTextFile(args(2))
 
-    // 2. driver broadcasts bloom-filter
-    sc.broadcast(bf)
 
-    // 3. use bloom-filter to filter big data set
-    val filtered= bigRDD.filter(x => bf.mightContain(x._1) && bf.mightContain(x._2))
-
-    // 4. join big data set and small data set
-    filtered.join(smallRDD).saveAsTextFile(args(2))
-  }
 {% endcodeblock %}
-
-... which is shown in the screenshot below:
-{% img left /images/screenshot.png 350 350 'image' 'images' %}
 
 
