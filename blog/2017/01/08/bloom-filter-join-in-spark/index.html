@@ -86,11 +86,13 @@
 
 <div class="entry-content"><p>When it comes to join optimization techniques, map-side(broadcast) join is an obvious candidate, however it doesn&rsquo;t work when the data set is not small enough to fit into memory. But we can extend this approach if we find a representation of the data set that is small, e.g. Bloom filter.</p>
 
-<p>A Bloom filter is a space-efficient probabilistic data structure used to test whether a member is an element of a set(&lt;10 bits per element are required for a 1% false positive rate). Recently I ported a job from Apache Pig to Spark which gained significant speedup by using Bloom filter. This job joins 60 days of mobile-device pairs to cookies from a partner. The optimized join job goes like this: first build partial Bloom filters in each partition of smaller data, which can be done using mapPartitions in Spark. They are collected into driver node and merged into a full Bloom filter, which is then distributed to all executors and used to filter out large portions of the data that will not find a match when joined.</p>
+<p>A Bloom filter is a space-efficient probabilistic data structure used to test whether a member is an element of a set(&lt;10 bits per element are required for a 1% false positive rate). Recently I ported a job from Apache Pig to Spark which gained significant speedup by using Bloom filter. This job joins 60 days of mobile-device pairs to cookies from a partner.</p>
 
-<p>Implementation of Bloom filter in MapReduce is cumbersome in that you have to explicitly use DistributedCache, and and write a lot of boilerplate code that handles file system I/O when writing it to HDFS and read it back in second stage. Mapper with only one cpu core is inefficient when the filter is large. While MultithreadedMapper is possible, it&rsquo;s difficult to write code that is thread-safe. Spark&rsquo;s executor is a thread-pool by design, you can easily assign many cpu cores to an executor. And Spark has a nice feature called Broadcast Variables that saves you a lot of effort, allowing you to distribute large data using efficient broadcast algorithms to reduce communication cost.</p>
+<p>The optimized join goes like this: first build partial Bloom filters in each partition of smaller data, which can be done using <code>mapPartitions</code> in Spark. They are collected into driver node and merged into a full Bloom filter, which is then distributed to all executors and used to filter out large portions of the data that will not find a match when joined.</p>
 
-<p>The good news is we don&rsquo;t need to write our own Bloom filter from scratch, instead we can use  <code>org.apache.spark.util.sketch.BloomFilter</code> which is largely based on Google&rsquo;s Guava. Under the hood it&rsquo;s a <strong>long[]</strong> representing a bit array, it has the advantage over other implementation in that the number of inserted bits can be larger than 4bn.</p>
+<p>Implementation of Bloom filter in MapReduce is cumbersome in that you have to explicitly use <code>DistributedCache</code>, and and write a lot of boilerplate code that handles file system I/O when writing it to HDFS and read it back later. Mapper(container) with only one cpu core is also inefficient when the filter is large. While <code>MultithreadedMapper</code> is possible, it&rsquo;s difficult to write code that is thread-safe. Spark&rsquo;s executor is a thread-pool by design, you can easily assign many cpu cores to an executor. And Spark has a nice feature called Broadcast Variables that saves you a lot of effort, allowing you to distribute large data using efficient BitTorrent-like algorithms to reduce communication cost.</p>
+
+<p>The good news is we don&rsquo;t need to write our own Bloom filter from scratch, instead we can use <code>org.apache.spark.util.sketch.BloomFilter</code> that is largely based on Google&rsquo;s Guava library. Under the hood it&rsquo;s a <code>long[]</code> representing a bit array, it has the advantage over other implementation in that the number of inserted bits can be larger than 4bn.</p>
 
 <figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
 <span class='line-number'>2</span>
@@ -158,7 +160,13 @@
 </span></code></pre></td></tr></table></div></figure>
 
 
+<p>I run a test on the job I mentioned above. Simply counting the number of records in each stage shows >90% savings in shuffle size!</p>
 
+<pre><code>Smarll data set: 244,071,770 records
+Big data set: 42,504,945,562 records
+After filtered: 1,587,344,750 records
+After joined: 697,421,722 records
+</code></pre>
 </div>
 
 
