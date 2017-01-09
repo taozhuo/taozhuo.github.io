@@ -8,11 +8,12 @@ categories:
 
 When it comes to join optimization techniques, map-side(broadcast) join is an obvious candidate, however it doesn't work when the data set is not small enough to fit into memory. But we can extend this approach if we find a representation of the data set that is small, e.g. Bloom filter.
 
-A Bloom filter is a space-efficient probabilistic data structure used to test whether a member is an element of a set.
+A Bloom filter is a space-efficient probabilistic data structure used to test whether a member is an element of a set(<10 bits per element are required for a 1% false positive rate). Recently I ported a job from Apache Pig to Spark which gained significant speedup by using Bloom filter. This job joins 60 days of mobile-device pairs to cookies from a partner. The optimized join job goes like this: first build partial Bloom filters in each partition of smaller data, which can be done using mapPartitions in Spark. They are collected into driver node and merged into a full Bloom filter, which is then distributed to all executors and used to filter out large portions of the data that will not find a match when joined.
 
-Implementation of Bloom filter in MapReduce is cumbersome in that you have to explicitly use DistributedCache, and and write a lot of boilerplate code that handles file system I/O when writing it to HDFS and read it back in second stage. Spark has a nice feature called Broadcast Variables that saves you a lot of effort, and allows you to distribute the data using efficient broadcast algorithms to reduce communication cost.
+Implementation of Bloom filter in MapReduce is cumbersome in that you have to explicitly use DistributedCache, and and write a lot of boilerplate code that handles file system I/O when writing it to HDFS and read it back in second stage. Mapper with only one cpu core is inefficient when the filter is large. While MultithreadedMapper is possible, it's difficult to write code that is thread-safe. Spark's executor is a thread-pool by design, you can easily assign many cpu cores to an executor. And Spark has a nice feature called Broadcast Variables that saves you a lot of effort, allowing you to distribute large data using efficient broadcast algorithms to reduce communication cost.
 
-We don't need to write our own Bloom filter from scratch, instead we can use **org.apache.spark.util.sketch.BloomFilter** which is largely based on Google's Guava. Under the hood it's a **long[]** representing a bit array, it has the advantage over other implementation that the number of inserted bits can be larger than 4bn.
+
+The good news is we don't need to write our own Bloom filter from scratch, instead we can use  `org.apache.spark.util.sketch.BloomFilter` which is largely based on Google's Guava. Under the hood it's a **long[]** representing a bit array, it has the advantage over other implementation in that the number of inserted bits can be larger than 4bn.
 
 {% codeblock lang:scala %}
 import org.apache.spark.util.sketch.BloomFilter
