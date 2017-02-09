@@ -4,7 +4,7 @@
   <title><![CDATA[Zhuo's Blog]]></title>
   <link href="http://taozhuo.github.io/atom.xml" rel="self"/>
   <link href="http://taozhuo.github.io/"/>
-  <updated>2017-01-08T22:27:02-08:00</updated>
+  <updated>2017-02-08T21:40:45-08:00</updated>
   <id>http://taozhuo.github.io/</id>
   <author>
     <name><![CDATA[Zhuo Tao]]></name>
@@ -12,6 +12,148 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Handle Categorical Features in Spark ML(Random Forest)]]></title>
+    <link href="http://taozhuo.github.io/blog/2017/02/08/how-to-handle-categorical-features-in-spark-ml/"/>
+    <updated>2017-02-08T15:07:49-08:00</updated>
+    <id>http://taozhuo.github.io/blog/2017/02/08/how-to-handle-categorical-features-in-spark-ml</id>
+    <content type="html"><![CDATA[<p>Random Forest(RF) is an ensemble training algorithm that is very popular in data science and machine learning communities. It uses bagging and feature subsets to train on 100s of decision trees to reduce overfitting. It&rsquo;s also fast because it&rsquo;s an Embarrassingly parallel task. In production runs using scikit-learn&rsquo;s implementation, it takes less than one hour to train 5 million samples on 30 cpu cores, and several hours if doing a grid search on two grid points with cross validation. Compared to other ensemble algorithms like Gradient Boosted Trees, it&rsquo;s much faster.</p>
+
+<p>RF doesn&rsquo;t require feature normalization, and can handle categorical fetures. However this is up to specific implementations. In Spark ML, it&rsquo;s a little tricky. Before Spark 2.0, MLlib&rsquo;s RDD-based API lets you pass in <code>categoricalFeaturesInfo</code>, which is a mapping from feature index to number of categories, into method <code>RandomForest.trainClassifier(trainingData, numClasses, categoricalFeaturesInfo, numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)</code>. However since 2.0 the primary API is the DataFrame-based API in the spark.ml package, which doesn&rsquo;t reach feature parity until 2.2.</p>
+
+<p>There are still several ways to handle categorical fetures. The easiest one is treat all features as continuous variable, e.g. you can do some string splitting on the text file you read in, wrap them in <code>LabeledPoint</code> objects and convert RDD into DataFrame, which is then passed to <code>RandomForestClassifier</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'>    <span class="k">val</span> <span class="n">testDF</span> <span class="k">=</span> <span class="n">testRDD</span><span class="o">.</span><span class="n">map</span> <span class="o">{</span> <span class="n">line</span> <span class="k">=&gt;</span>
+</span><span class='line'>      <span class="k">val</span> <span class="n">list</span> <span class="k">=</span> <span class="n">line</span><span class="o">.</span><span class="n">split</span><span class="o">(</span><span class="sc">&#39;,&#39;</span><span class="o">)</span>
+</span><span class='line'>      <span class="k">val</span> <span class="n">label</span> <span class="k">=</span> <span class="n">list</span><span class="o">(</span><span class="mi">0</span><span class="o">).</span><span class="n">toDouble</span>
+</span><span class='line'>      <span class="k">val</span> <span class="n">features</span> <span class="k">=</span> <span class="n">list</span><span class="o">.</span><span class="n">slice</span><span class="o">(</span><span class="mi">1</span><span class="o">,</span><span class="mi">100</span><span class="o">).</span><span class="n">map</span><span class="o">(</span><span class="k">_</span><span class="o">.</span><span class="n">toDouble</span><span class="o">)</span>
+</span><span class='line'>      <span class="nc">LabeledPoint</span><span class="o">(</span><span class="n">label</span><span class="o">,</span> <span class="nc">Vectors</span><span class="o">.</span><span class="n">dense</span><span class="o">(</span><span class="n">features</span><span class="o">))</span>
+</span><span class='line'>    <span class="o">}.</span><span class="n">toDF</span><span class="o">(</span><span class="s">&quot;label&quot;</span><span class="o">,</span> <span class="s">&quot;features&quot;</span><span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>However, you do it the easy way at the expense of the model quality. In my testing, it only reaches AUC-PR score of 0.45 compared to 0.49 in scikit-learn.</p>
+
+<p>Another way is build a pipeline that combines feature transformers and model estimators. We can use <code>VectorIndexer</code> to automatically identify categorical features based on threshold for the number of values a categorical feature can take. If a feature is found to have > maxCategories distinct values then it is declared continuous, otherwise it&rsquo;s declared categorical feature. By default it&rsquo;s 4, but you can try different values:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'>    <span class="k">val</span> <span class="n">featureIndexer</span> <span class="k">=</span> <span class="k">new</span> <span class="nc">VectorIndexer</span><span class="o">()</span>
+</span><span class='line'>      <span class="o">.</span><span class="n">setInputCol</span><span class="o">(</span><span class="s">&quot;features&quot;</span><span class="o">)</span>
+</span><span class='line'>      <span class="o">.</span><span class="n">setOutputCol</span><span class="o">(</span><span class="s">&quot;indexedFeatures&quot;</span><span class="o">)</span>
+</span><span class='line'>      <span class="o">.</span><span class="n">setMaxCategories</span><span class="o">(</span><span class="mi">5</span><span class="o">)</span>
+</span><span class='line'>      <span class="o">.</span><span class="n">fit</span><span class="o">(</span><span class="n">train</span><span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Everything looks fine up to this point. But when you run model prediction, you immediately see the following error:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'> <span class="n">java</span><span class="o">.</span><span class="n">util</span><span class="o">.</span><span class="nc">NoSuchElementException</span><span class="k">:</span> <span class="kt">key</span> <span class="kt">not</span> <span class="kt">found:</span> <span class="err">3</span><span class="kt">.</span><span class="err">0</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">scala.collection.MapLike$class.default</span><span class="o">(</span><span class="kt">MapLike.scala:</span><span class="err">228</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">scala.collection.AbstractMap.default</span><span class="o">(</span><span class="kt">Map.scala:</span><span class="err">58</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">scala.collection.MapLike$class.apply</span><span class="o">(</span><span class="kt">MapLike.scala:</span><span class="err">141</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">scala.collection.AbstractMap.apply</span><span class="o">(</span><span class="kt">Map.scala:</span><span class="err">58</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">org.apache.spark.ml.feature.VectorIndexerModel$$anonfun$10$$anonfun$apply$4.apply</span><span class="o">(</span><span class="kt">VectorIndexer.scala:</span><span class="err">316</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">org.apache.spark.ml.feature.VectorIndexerModel$$anonfun$10$$anonfun$apply$4.apply</span><span class="o">(</span><span class="kt">VectorIndexer.scala:</span><span class="err">315</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">scala.collection.immutable.HashMap$HashMap1.foreach</span><span class="o">(</span><span class="kt">HashMap.scala:</span><span class="err">224</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">scala.collection.immutable.HashMap$HashTrieMap.foreach</span><span class="o">(</span><span class="kt">HashMap.scala:</span><span class="err">403</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">scala.collection.immutable.HashMap$HashTrieMap.foreach</span><span class="o">(</span><span class="kt">HashMap.scala:</span><span class="err">403</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">org.apache.spark.ml.feature.VectorIndexerModel$$anonfun$10.apply</span><span class="o">(</span><span class="kt">VectorIndexer.scala:</span><span class="err">315</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">org.apache.spark.ml.feature.VectorIndexerModel$$anonfun$10.apply</span><span class="o">(</span><span class="kt">VectorIndexer.scala:</span><span class="err">309</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">org.apache.spark.ml.feature.VectorIndexerModel$$anonfun$11.apply</span><span class="o">(</span><span class="kt">VectorIndexer.scala:</span><span class="err">351</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">org.apache.spark.ml.feature.VectorIndexerModel$$anonfun$11.apply</span><span class="o">(</span><span class="kt">VectorIndexer.scala:</span><span class="err">351</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">at</span> <span class="kt">org.apache.spark.sql.catalyst.expressions.GeneratedClass$SpecificUnsafeProjection.apply</span><span class="o">(</span><span class="kt">Unknown</span> <span class="kt">Source</span><span class="o">)</span>
+</span><span class='line'>  <span class="kt">...</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>This is caused by unknown categorical features that are not in VectorIndexer&rsquo;s map(SPARK-12375). The issue is not resolved yet, but you can try installing the patch.</p>
+
+<p>You might wonder, is there a way to pass in category info into the DataFrame-based model? The answer is, sort of. Since Spark 1.2, there is metadata field(SPARK-3569) in the schema that can be used by machine learning applications to store information like categorical/continuous, number categories, category-to-index map. It&rsquo;s keyed by &ldquo;ml_attr&rdquo;. This field is empty by default, it&rsquo;ll generate something for you if you run VectorIndexer:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'><span class="n">scala</span><span class="o">&gt;</span> <span class="n">train</span><span class="o">.</span><span class="n">schema</span><span class="o">(</span><span class="mi">1</span><span class="o">).</span><span class="n">metadata</span>
+</span><span class='line'><span class="n">res6</span><span class="k">:</span> <span class="kt">org.apache.spark.sql.</span><span class="k">type</span><span class="kt">s.Metadata</span> <span class="o">=</span> <span class="o">{}</span>
+</span><span class='line'><span class="n">scala</span><span class="o">&gt;</span> <span class="n">field</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">getMetadata</span><span class="o">(</span><span class="s">&quot;ml_attr&quot;</span><span class="o">)</span>
+</span><span class='line'><span class="n">java</span><span class="o">.</span><span class="n">util</span><span class="o">.</span><span class="nc">NoSuchElementException</span><span class="k">:</span> <span class="kt">key</span> <span class="kt">not</span> <span class="kt">found:</span> <span class="kt">ml_attr</span>
+</span><span class='line'><span class="o">...</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p><code>RandomForestClassifier.scala</code> then checks the metadata field to get the list of categorical information:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'>    <span class="k">val</span> <span class="n">categoricalFeatures</span><span class="k">:</span> <span class="kt">Map</span><span class="o">[</span><span class="kt">Int</span>, <span class="kt">Int</span><span class="o">]</span> <span class="k">=</span>
+</span><span class='line'>      <span class="nc">MetadataUtils</span><span class="o">.</span><span class="n">getCategoricalFeatures</span><span class="o">(</span><span class="n">dataset</span><span class="o">.</span><span class="n">schema</span><span class="o">(</span><span class="n">$</span><span class="o">(</span><span class="n">featuresCol</span><span class="o">)))</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>If we dig a little deeper to see how the mapping is generated, there is an object called <code>NominalAttribute</code>:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'>          <span class="n">attr</span> <span class="k">match</span> <span class="o">{</span>
+</span><span class='line'>            <span class="k">case</span> <span class="k">_:</span> <span class="kt">NumericAttribute</span> <span class="kt">|</span> <span class="kt">UnresolvedAttribute</span> <span class="o">=&gt;</span> <span class="nc">Iterator</span><span class="o">()</span>
+</span><span class='line'>            <span class="k">case</span> <span class="n">binAttr</span><span class="k">:</span> <span class="kt">BinaryAttribute</span> <span class="o">=&gt;</span> <span class="nc">Iterator</span><span class="o">(</span><span class="n">idx</span> <span class="o">-&gt;</span> <span class="mi">2</span><span class="o">)</span>
+</span><span class='line'>            <span class="k">case</span> <span class="n">nomAttr</span><span class="k">:</span> <span class="kt">NominalAttribute</span> <span class="o">=&gt;</span>
+</span><span class='line'>              <span class="n">nomAttr</span><span class="o">.</span><span class="n">getNumValues</span> <span class="k">match</span> <span class="o">{</span>
+</span><span class='line'>                <span class="k">case</span> <span class="nc">Some</span><span class="o">(</span><span class="n">numValues</span><span class="k">:</span> <span class="kt">Int</span><span class="o">)</span> <span class="k">=&gt;</span> <span class="nc">Iterator</span><span class="o">(</span><span class="n">idx</span> <span class="o">-&gt;</span> <span class="n">numValues</span><span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The bad news is there is no public API yet(SPARK-8515) to generate an <code>NominalAttribute</code> object. The only factory method looks like this:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'>  <span class="k">object</span> <span class="nc">NominalAttribute</span> <span class="k">extends</span> <span class="nc">AttributeFactory</span> <span class="o">{</span>
+</span><span class='line'>     <span class="cm">/** The default nominal attribute. */</span>
+</span><span class='line'>     <span class="k">final</span> <span class="k">val</span> <span class="n">defaultAttr</span><span class="k">:</span> <span class="kt">NominalAttribute</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">NominalAttribute</span>
+</span><span class='line'>     <span class="k">private</span><span class="o">[</span><span class="kt">attribute</span><span class="o">]</span> <span class="k">override</span> <span class="k">def</span> <span class="n">fromMetadata</span><span class="o">(</span><span class="n">metadata</span><span class="k">:</span> <span class="kt">Metadata</span><span class="o">)</span><span class="k">:</span> <span class="kt">NominalAttribute</span> <span class="o">=</span> <span class="o">{</span>
+</span><span class='line'>  <span class="o">...</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Of course, you can always hack the core files and build your Spark. Have fun!</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Bloom-filter Join in Spark]]></title>

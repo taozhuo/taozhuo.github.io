@@ -5,7 +5,7 @@
 <!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
 <head>
   <meta charset="utf-8">
-  <title>Zhuo's Blog</title>
+  <title>How to Handle Categorical Features in Spark ML(Random Forest) - Zhuo's Blog</title>
   <meta name="author" content="Zhuo Tao">
 
   
@@ -18,7 +18,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
   
-  <link rel="canonical" href="http://taozhuo.github.io/">
+  <link rel="canonical" href="http://taozhuo.github.io/blog/2017/02/08/how-to-handle-categorical-features-in-spark-ml/">
   <link href="/favicon.png" rel="icon">
   <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
   <link href="/atom.xml" rel="alternate" title="Zhuo's Blog" type="application/atom+xml">
@@ -63,15 +63,12 @@
 </nav>
   <div id="main">
     <div id="content">
-      <div class="blog-index">
+      <div>
+<article class="hentry" role="article">
   
-  
-  
-    <article>
-      
   <header>
     
-      <h1 class="entry-title"><a href="/blog/2017/02/08/how-to-handle-categorical-features-in-spark-ml/">How to Handle Categorical Features in Spark ML(Random Forest)</a></h1>
+      <h1 class="entry-title">How to Handle Categorical Features in Spark ML(Random Forest)</h1>
     
     
       <p class="meta">
@@ -87,7 +84,7 @@
   </header>
 
 
-  <div class="entry-content"><p>Random Forest(RF) is an ensemble training algorithm that is very popular in data science and machine learning communities. It uses bagging and feature subsets to train on 100s of decision trees to reduce overfitting. It&rsquo;s also fast because it&rsquo;s an Embarrassingly parallel task. In production runs using scikit-learn&rsquo;s implementation, it takes less than one hour to train 5 million samples on 30 cpu cores, and several hours if doing a grid search on two grid points with cross validation. Compared to other ensemble algorithms like Gradient Boosted Trees, it&rsquo;s much faster.</p>
+<div class="entry-content"><p>Random Forest(RF) is an ensemble training algorithm that is very popular in data science and machine learning communities. It uses bagging and feature subsets to train on 100s of decision trees to reduce overfitting. It&rsquo;s also fast because it&rsquo;s an Embarrassingly parallel task. In production runs using scikit-learn&rsquo;s implementation, it takes less than one hour to train 5 million samples on 30 cpu cores, and several hours if doing a grid search on two grid points with cross validation. Compared to other ensemble algorithms like Gradient Boosted Trees, it&rsquo;s much faster.</p>
 
 <p>RF doesn&rsquo;t require feature normalization, and can handle categorical fetures. However this is up to specific implementations. In Spark ML, it&rsquo;s a little tricky. Before Spark 2.0, MLlib&rsquo;s RDD-based API lets you pass in <code>categoricalFeaturesInfo</code>, which is a mapping from feature index to number of categories, into method <code>RandomForest.trainClassifier(trainingData, numClasses, categoricalFeaturesInfo, numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)</code>. However since 2.0 the primary API is the DataFrame-based API in the spark.ml package, which doesn&rsquo;t reach feature parity until 2.2.</p>
 
@@ -222,129 +219,46 @@
 
 <p>Of course, you can always hack the core files and build your Spark. Have fun!</p>
 </div>
-  
-  
 
 
-    </article>
-  
-  
-    <article>
+  <footer>
+    <p class="meta">
       
-  <header>
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Zhuo Tao</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2017-02-08T15:07:49-08:00'><span class='date'><span class='date-month'>Feb</span> <span class='date-day'>8</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>3:07 pm</span></time>
+      
+
+
+    </p>
     
-      <h1 class="entry-title"><a href="/blog/2017/01/08/bloom-filter-join-in-spark/">Bloom-filter Join in Spark</a></h1>
-    
-    
-      <p class="meta">
-        
-
-
-
-
-<time class='entry-date' datetime='2017-01-08T14:33:32-08:00'><span class='date'><span class='date-month'>Jan</span> <span class='date-day'>8</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>2:33 pm</span></time>
-        
-      </p>
-    
-  </header>
-
-
-  <div class="entry-content"><p>When it comes to join optimization techniques, map-side(broadcast) join is an obvious candidate. However it doesn&rsquo;t work when the data set is not small enough to fit into memory. But we can extend this approach if we find a representation of the data set that is small, e.g. a Bloom filter.</p>
-
-<p>A Bloom filter is a space-efficient probabilistic data structure used to test whether a member is an element of a set(&lt;10 bits per element are required for a 1% false positive rate). Recently I ported a job from Apache Pig to Spark which gained significant speedup by using Bloom filter. This job joins 60 days of mobile-device pairs to cookies from a partner.</p>
-
-<p>The optimized join goes like this: first build partial Bloom filters in each partition of smaller data, which can be done using <code>mapPartitions</code> in Spark. They are collected into driver node and merged into a full Bloom filter, which is then distributed to all executors and used to filter out large portions of the data that will not find a match when joined.</p>
-
-<p>Implementation of Bloom filter in MapReduce is cumbersome in that you have to explicitly use <code>DistributedCache</code>, and write a lot of boilerplate code that handles file system I/O when writing it to HDFS and read it back later. Mapper(container) with only one cpu core is also inefficient when the filter is large. While <code>MultithreadedMapper</code> is possible, it&rsquo;s difficult to write code that is thread-safe. Spark&rsquo;s executor is a thread-pool by design, so you can easily assign many cpu cores to an executor. And Spark has a nice feature called Broadcast Variables that saves you a lot of effort, allowing you to distribute large data using efficient BitTorrent-like algorithms to reduce communication cost.</p>
-
-<p>The good news is we don&rsquo;t need to write our own Bloom filter from scratch, instead we can use <code>org.apache.spark.util.sketch.BloomFilter</code> that is largely based on Google&rsquo;s Guava library. Under the hood it&rsquo;s a <code>long[]</code> representing a bit array, it has the advantage over other implementation in that the number of inserted bits can be larger than 4bn.</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-<span class='line-number'>7</span>
-<span class='line-number'>8</span>
-<span class='line-number'>9</span>
-<span class='line-number'>10</span>
-<span class='line-number'>11</span>
-<span class='line-number'>12</span>
-<span class='line-number'>13</span>
-<span class='line-number'>14</span>
-<span class='line-number'>15</span>
-<span class='line-number'>16</span>
-<span class='line-number'>17</span>
-<span class='line-number'>18</span>
-<span class='line-number'>19</span>
-<span class='line-number'>20</span>
-<span class='line-number'>21</span>
-<span class='line-number'>22</span>
-<span class='line-number'>23</span>
-</pre></td><td class='code'><pre><code class='scala'><span class='line'><span class="k">import</span> <span class="nn">org.apache.spark.util.sketch.BloomFilter</span>
-</span><span class='line'>
-</span><span class='line'><span class="c1">//reading files</span>
-</span><span class='line'><span class="k">val</span> <span class="n">bigRDD</span> <span class="k">=</span> <span class="o">...</span>
-</span><span class='line'><span class="k">val</span> <span class="n">smallRDD</span> <span class="k">=</span> <span class="o">...</span>
-</span><span class='line'><span class="k">val</span> <span class="n">cnt</span><span class="k">:</span><span class="kt">Long</span> <span class="o">=</span> <span class="n">smallRDD</span><span class="o">.</span><span class="n">count</span><span class="o">()</span>
-</span><span class='line'>
-</span><span class='line'><span class="c1">// 1a. create bloom filters for smaller data locally on each partition</span>
-</span><span class='line'><span class="c1">// 1b. merge them in driver</span>
-</span><span class='line'><span class="k">val</span> <span class="n">bf</span> <span class="k">=</span> <span class="n">smallRDD</span><span class="o">.</span><span class="n">mapPartitions</span> <span class="o">{</span> <span class="n">iter</span> <span class="k">=&gt;</span>
-</span><span class='line'>  <span class="k">val</span> <span class="n">b</span> <span class="k">=</span> <span class="nc">BloomFilter</span><span class="o">.</span><span class="n">create</span><span class="o">(</span><span class="n">cnt</span><span class="o">,</span> <span class="mf">0.1</span><span class="o">)</span>  <span class="c1">//false positive probability=0.1</span>
-</span><span class='line'>  <span class="n">iter</span><span class="o">.</span><span class="n">foreach</span><span class="o">(</span><span class="n">i</span> <span class="k">=&gt;</span> <span class="n">b</span><span class="o">.</span><span class="n">putString</span><span class="o">(</span><span class="n">i</span><span class="o">.</span><span class="n">_1</span><span class="o">))</span>
-</span><span class='line'>  <span class="nc">Iterator</span><span class="o">(</span><span class="n">b</span><span class="o">)</span>
-</span><span class='line'><span class="o">}.</span><span class="n">reduce</span><span class="o">((</span><span class="n">x</span><span class="o">,</span><span class="n">y</span><span class="o">)</span> <span class="k">=&gt;</span> <span class="n">x</span><span class="o">.</span><span class="n">mergeInPlace</span><span class="o">(</span><span class="n">y</span><span class="o">))</span>
-</span><span class='line'>
-</span><span class='line'><span class="c1">// 2. driver broadcasts bloom-filter</span>
-</span><span class='line'><span class="n">sc</span><span class="o">.</span><span class="n">broadcast</span><span class="o">(</span><span class="n">bf</span><span class="o">)</span>
-</span><span class='line'>
-</span><span class='line'><span class="c1">// 3. use bloom-filter to filter big data set</span>
-</span><span class='line'><span class="k">val</span> <span class="n">filtered</span><span class="k">=</span> <span class="n">bigRDD</span><span class="o">.</span><span class="n">filter</span><span class="o">(</span><span class="n">x</span> <span class="k">=&gt;</span> <span class="n">bf</span><span class="o">.</span><span class="n">mightContain</span><span class="o">(</span><span class="n">x</span><span class="o">.</span><span class="n">_1</span><span class="o">)</span> <span class="o">&amp;&amp;</span> <span class="n">bf</span><span class="o">.</span><span class="n">mightContain</span><span class="o">(</span><span class="n">x</span><span class="o">.</span><span class="n">_2</span><span class="o">))</span>
-</span><span class='line'>
-</span><span class='line'><span class="c1">// 4. join big data set and small data set</span>
-</span><span class='line'><span class="n">filtered</span><span class="o">.</span><span class="n">join</span><span class="o">(</span><span class="n">smallRDD</span><span class="o">).</span><span class="n">saveAsTextFile</span><span class="o">(</span><span class="n">args</span><span class="o">(</span><span class="mi">2</span><span class="o">))</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In order for this to run on the Hadoop cluster, we need to set sufficiently large memory on both driver and executors to hold the underlying bit array, depending on the value of false positive probability we&rsquo;ve set above. And we need to increase the maximum allowable size of Kryo serialization buffer, otherwise we&rsquo;ll see exceptions from Kryo:</p>
-
-<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
-<span class='line-number'>2</span>
-<span class='line-number'>3</span>
-<span class='line-number'>4</span>
-<span class='line-number'>5</span>
-<span class='line-number'>6</span>
-</pre></td><td class='code'><pre><code class='scala'><span class='line'><span class="n">spark</span><span class="o">.</span><span class="n">kryoserializer</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">max</span>  <span class="mi">512</span><span class="n">m</span>
-</span><span class='line'> <span class="o">--</span><span class="n">driver</span><span class="o">-</span><span class="n">memory</span> <span class="mi">100</span><span class="n">g</span> <span class="o">\</span>
-</span><span class='line'> <span class="o">--</span><span class="n">driver</span><span class="o">-</span><span class="n">cores</span> <span class="mi">24</span> <span class="o">\</span>
-</span><span class='line'> <span class="o">--</span><span class="n">num</span><span class="o">-</span><span class="n">executors</span> <span class="mi">130</span> <span class="o">\</span>
-</span><span class='line'> <span class="o">--</span><span class="n">executor</span><span class="o">-</span><span class="n">memory</span> <span class="mi">50</span><span class="n">g</span> <span class="o">\</span>
-</span><span class='line'> <span class="o">--</span><span class="n">executor</span><span class="o">-</span><span class="n">cores</span> <span class="mi">8</span> <span class="o">\</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>I ran a test on the job I mentioned above. Simply counting the number of records in each stage shows >90% savings in shuffle size!</p>
-
-<pre><code>Small data set: 244,071,770 records
-Big data set: 42,504,945,562 records
-After filtered: 1,587,344,750 records
-After joined: 697,421,722 records
-</code></pre>
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://taozhuo.github.io/blog/2017/02/08/how-to-handle-categorical-features-in-spark-ml/" data-via="" data-counturl="http://taozhuo.github.io/blog/2017/02/08/how-to-handle-categorical-features-in-spark-ml/" >Tweet</a>
+  
+  
+  
 </div>
-  
-  
 
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2017/01/08/bloom-filter-join-in-spark/" title="Previous Post: Bloom-filter join in Spark">&laquo; Bloom-filter join in Spark</a>
+      
+      
+    </p>
+  </footer>
+</article>
 
-    </article>
-  
-  <div class="pagination">
-    
-    <a href="/blog/archives">Blog Archives</a>
-    
-  </div>
 </div>
+
 <aside class="sidebar">
   
     <section>
@@ -368,6 +282,7 @@ After joined: 697,421,722 records
 
   
 </aside>
+
 
     </div>
   </div>
