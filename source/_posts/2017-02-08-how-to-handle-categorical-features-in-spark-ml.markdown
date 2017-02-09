@@ -8,7 +8,14 @@ categories:
 
 Random Forest(RF) is an ensemble training algorithm that is very popular in data science and machine learning communities. It uses bagging and feature subsets to train on 100s of decision trees to reduce overfitting. It's also fast because it's an Embarrassingly parallel task. In production runs using scikit-learn's implementation, it takes less than one hour to train 5 million samples on 30 cpu cores, and several hours if doing a grid search on two grid points with cross validation. Compared to other ensemble algorithms like Gradient Boosted Trees, it's much faster.
 
-RF doesn't require feature normalization, and can handle categorical fetures. However this is up to specific implementations. In Spark ML, it's a little tricky. Before Spark 2.0, MLlib's RDD-based API lets you pass in `categoricalFeaturesInfo`, which is a mapping from feature index to number of categories, into method `RandomForest.trainClassifier(trainingData, numClasses, categoricalFeaturesInfo, numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)`. However since 2.0 the primary API is the DataFrame-based API in the spark.ml package, which doesn't reach feature parity until 2.2.
+RF doesn't require feature normalization, and can handle categorical fetures. However this is up to specific implementations. In Spark ML, it's a little tricky. Before Spark 2.0, MLlib's RDD-based API lets you pass in `categoricalFeaturesInfo`, which is a mapping from feature index to number of categories, into method:
+
+{% codeblock lang:scala %}
+ RandomForest.trainClassifier(trainingData, numClasses, categoricalFeaturesInfo, 
+ 	numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)
+{% endcodeblock %}
+ 
+However since 2.0 the primary API is the DataFrame-based API in the spark.ml package, which doesn't reach feature parity until 2.2.
 
 There are still several ways to handle categorical fetures. The easiest one is treat all features as continuous variable, e.g. you can do some string splitting on the text file you read in, wrap them in `LabeledPoint` objects and convert RDD into DataFrame, which is then passed to `RandomForestClassifier`:
 
@@ -54,9 +61,9 @@ Everything looks fine up to this point. But when you run model prediction, you i
 	...
 {% endcodeblock %}
 
-This is caused by unknown categorical features that are not in VectorIndexer's map(SPARK-12375). The issue is not resolved yet, but you can try installing the patch.
+This is caused by unknown categorical features that are not in VectorIndexer's map([SPARK-12375](https://issues.apache.org/jira/browse/SPARK-12375)). The issue is not resolved yet, but you can try installing the patch.
 
-You might wonder, is there a way to pass in category info into the DataFrame-based model? The answer is, sort of. Since Spark 1.2, there is metadata field(SPARK-3569) in the schema that can be used by machine learning applications to store information like categorical/continuous, number categories, category-to-index map. It's keyed by "ml_attr". This field is empty by default, it'll generate something for you if you run VectorIndexer:
+You might wonder, is there a way to pass in category info into the DataFrame-based model? The answer is, sort of. Since Spark 1.2, there is metadata field([SPARK-3569](https://issues.apache.org/jira/browse/SPARK-3569)) in the schema that can be used by machine learning applications to store information like categorical/continuous, number categories, category-to-index map. It's keyed by "ml_attr". This field is empty by default, it'll generate something for you if you run VectorIndexer:
 
 {% codeblock lang:scala %}
 scala> train.schema(1).metadata
@@ -84,7 +91,7 @@ If we dig a little deeper to see how the mapping is generated, there is an objec
                 case Some(numValues: Int) => Iterator(idx -> numValues)
 {% endcodeblock %}
 
-The bad news is there is no public API yet(SPARK-8515) to generate an `NominalAttribute` object. The only factory method looks like this:
+The bad news is there is no public API yet([SPARK-8515](https://issues.apache.org/jira/browse/SPARK-8515)) to generate an `NominalAttribute` object. The only factory method looks like this:
 
 {% codeblock lang:scala %}
   object NominalAttribute extends AttributeFactory {
