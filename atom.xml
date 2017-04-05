@@ -4,7 +4,7 @@
   <title><![CDATA[Zhuo's Blog]]></title>
   <link href="http://taozhuo.github.io/atom.xml" rel="self"/>
   <link href="http://taozhuo.github.io/"/>
-  <updated>2017-02-08T21:48:17-08:00</updated>
+  <updated>2017-04-05T12:53:21-07:00</updated>
   <id>http://taozhuo.github.io/</id>
   <author>
     <name><![CDATA[Zhuo Tao]]></name>
@@ -12,6 +12,265 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[How to Tune Gradient-Boosted Trees in Spark]]></title>
+    <link href="http://taozhuo.github.io/blog/2017/02/27/how-to-tune-gradient-boosted-trees-in-spark/"/>
+    <updated>2017-02-27T14:54:30-08:00</updated>
+    <id>http://taozhuo.github.io/blog/2017/02/27/how-to-tune-gradient-boosted-trees-in-spark</id>
+    <content type="html"><![CDATA[<p>Gradient-Boosted trees(GBT) is one of the tree ensemble models that is popular among data science community. The most popular implementation - XGBoost, is used by half of winning teams competing in Kaggle challenges. However, it requires many native libraries that do not play well with JVM-based production system such as Hadoop and Spark, adding a lot of operational complexities. Sometimes it&rsquo;s not the efficient way. E.g. in the prediction phase of the end-to-end ML pipeline, we need to apply the trained model on a large amount of data(tens of billions of records). This is done in Python via Hadoop streaming, whcih consumes a lot of memory when loading batches of data fore prediction.</p>
+
+<p>GBT in Spark ML/Mllib. there are a lot of variants in tree ensembles in old RDD-based API and new DataFrame-based API, but both point to the same Random forest implementation in <a href="https://github.com/apache/spark/blob/master/mllib/src/main/scala/org/apache/spark/ml/tree/impl/RandomForest.scala">RandomForest.scala</a>. Each iteration within the main loop of <a href="https://github.com/apache/spark/blob/master/mllib/src/main/scala/org/apache/spark/ml/tree/impl/GradientBoostedTrees.scala">GradientBoostedTrees.scala</a> calls <code>RandomForest</code> and will stop early if some validation condition is satisfied. <a href="https://github.com/apache/spark/blob/master/mllib/src/main/scala/org/apache/spark/ml/classification/GBTClassifier.scala">GBTClassifier.scala</a> is a wrapper class if you want to plug it into the Spark ML pipeline APIs, but it doesn&rsquo;t provide a method to output predicted probabilities. I still use the old RDD-based wrapper <a href="https://github.com/apache/spark/blob/master/mllib/src/main/scala/org/apache/spark/mllib/tree/GradientBoostedTrees.scala">GradientBoostedTrees</a> so I can calculate <code>AUPRC</code> and <code>AUROC</code> scores. Below is a code snippet on how to train the model and <code>AUPRC</code> &amp; <code>AUROC</code> calculations:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'>    <span class="k">val</span> <span class="n">boostingStrategy</span> <span class="k">=</span> <span class="nc">BoostingStrategy</span><span class="o">.</span><span class="n">defaultParams</span><span class="o">(</span><span class="s">&quot;Classification&quot;</span><span class="o">)</span>
+</span><span class='line'>  <span class="c1">//boosting parameters</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">numIterations</span> <span class="k">=</span> <span class="mi">100</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">learningRate</span> <span class="k">=</span> <span class="mf">0.15</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">setValidationTol</span><span class="o">(</span><span class="mf">0.01</span><span class="o">)</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">treeStrategy</span><span class="o">.</span><span class="n">numClasses</span> <span class="k">=</span> <span class="mi">2</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">treeStrategy</span><span class="o">.</span><span class="n">categoricalFeaturesInfo</span> <span class="k">=</span> <span class="nc">Map</span><span class="o">[</span><span class="kt">Int</span>, <span class="kt">Int</span><span class="o">](</span> <span class="mi">57</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">58</span><span class="o">-&gt;</span><span class="mi">4</span><span class="o">,</span><span class="mi">59</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span><span class="mi">60</span><span class="o">-&gt;</span><span class="mi">2</span><span class="o">,</span><span class="mi">61</span><span class="o">-&gt;</span><span class="mi">2</span><span class="o">,</span> <span class="mi">62</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">63</span><span class="o">-&gt;</span><span class="mi">2</span><span class="o">,</span> <span class="mi">64</span><span class="o">-&gt;</span><span class="mi">2</span><span class="o">,</span>
+</span><span class='line'>      <span class="mi">65</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">66</span><span class="o">-&gt;</span><span class="mi">2</span><span class="o">,</span> <span class="mi">67</span><span class="o">-&gt;</span><span class="mi">2</span><span class="o">,</span> <span class="mi">68</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">69</span><span class="o">-&gt;</span><span class="mi">2</span><span class="o">,</span> <span class="mi">70</span><span class="o">-&gt;</span><span class="mi">2</span><span class="o">,</span> <span class="mi">72</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">73</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">74</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">93</span><span class="o">-&gt;</span><span class="mi">5</span><span class="o">,</span> <span class="mi">94</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">96</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">99</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">102</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">105</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span>
+</span><span class='line'>      <span class="mi">108</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">111</span><span class="o">-&gt;</span><span class="mi">3</span><span class="o">,</span> <span class="mi">113</span><span class="o">-&gt;</span><span class="mi">10</span><span class="o">,</span> <span class="mi">114</span><span class="o">-&gt;</span><span class="mi">10</span><span class="o">)</span>
+</span><span class='line'>  <span class="c1">//tree parameters</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">treeStrategy</span><span class="o">.</span><span class="n">useNodeIdCache</span> <span class="k">=</span> <span class="kc">true</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">treeStrategy</span><span class="o">.</span><span class="n">subsamplingRate</span> <span class="k">=</span> <span class="mf">0.8</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">treeStrategy</span><span class="o">.</span><span class="n">maxBins</span> <span class="k">=</span> <span class="mi">10</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">treeStrategy</span><span class="o">.</span><span class="n">maxDepth</span> <span class="k">=</span> <span class="mi">12</span>
+</span><span class='line'>    <span class="n">boostingStrategy</span><span class="o">.</span><span class="n">treeStrategy</span><span class="o">.</span><span class="n">minInstancesPerNode</span> <span class="k">=</span> <span class="mi">32</span>
+</span><span class='line'>    <span class="nc">Logger</span><span class="o">.</span><span class="n">getLogger</span><span class="o">(</span><span class="nc">GradientBoostedTrees</span><span class="o">.</span><span class="n">getClass</span><span class="o">).</span><span class="n">setLevel</span><span class="o">(</span><span class="nc">Level</span><span class="o">.</span><span class="nc">DEBUG</span><span class="o">)</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">model</span> <span class="k">=</span> <span class="nc">GradientBoostedTrees</span><span class="o">.</span><span class="n">train</span><span class="o">(</span><span class="n">train</span><span class="o">,</span> <span class="n">boostingStrategy</span><span class="o">)</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">gbt</span> <span class="k">=</span> <span class="k">new</span> <span class="nc">GradientBoostedTrees</span><span class="o">(</span><span class="n">boostingStrategy</span><span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'>    <span class="c1">// Get class probability</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">treePredictions</span> <span class="k">=</span> <span class="n">test</span><span class="o">.</span><span class="n">map</span> <span class="o">{</span> <span class="n">point</span> <span class="k">=&gt;</span> <span class="n">model</span><span class="o">.</span><span class="n">trees</span><span class="o">.</span><span class="n">map</span><span class="o">(</span><span class="k">_</span><span class="o">.</span><span class="n">predict</span><span class="o">(</span><span class="n">point</span><span class="o">.</span><span class="n">features</span><span class="o">))</span> <span class="o">}</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">treePredictionsVector</span> <span class="k">=</span> <span class="n">treePredictions</span><span class="o">.</span><span class="n">map</span><span class="o">(</span><span class="n">array</span> <span class="k">=&gt;</span> <span class="nc">Vectors</span><span class="o">.</span><span class="n">dense</span><span class="o">(</span><span class="n">array</span><span class="o">))</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">treePredictionsMatrix</span> <span class="k">=</span> <span class="k">new</span> <span class="nc">RowMatrix</span><span class="o">(</span><span class="n">treePredictionsVector</span><span class="o">)</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">learningRate</span> <span class="k">=</span> <span class="n">model</span><span class="o">.</span><span class="n">treeWeights</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">learningRateMatrix</span> <span class="k">=</span> <span class="nc">Matrices</span><span class="o">.</span><span class="n">dense</span><span class="o">(</span><span class="n">learningRate</span><span class="o">.</span><span class="n">size</span><span class="o">,</span> <span class="mi">1</span><span class="o">,</span> <span class="n">learningRate</span><span class="o">)</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">weightedTreePredictions</span> <span class="k">=</span> <span class="n">treePredictionsMatrix</span><span class="o">.</span><span class="n">multiply</span><span class="o">(</span><span class="n">learningRateMatrix</span><span class="o">)</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">classProb</span> <span class="k">=</span> <span class="n">weightedTreePredictions</span><span class="o">.</span><span class="n">rows</span><span class="o">.</span><span class="n">flatMap</span><span class="o">(</span><span class="k">_</span><span class="o">.</span><span class="n">toArray</span><span class="o">).</span><span class="n">map</span><span class="o">(</span><span class="n">x</span> <span class="k">=&gt;</span> <span class="mi">1</span> <span class="o">/</span> <span class="o">(</span><span class="mi">1</span> <span class="o">+</span> <span class="nc">Math</span><span class="o">.</span><span class="n">exp</span><span class="o">(-</span><span class="mi">1</span> <span class="o">*</span> <span class="n">x</span><span class="o">)))</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">labels</span> <span class="k">=</span> <span class="n">test</span><span class="o">.</span><span class="n">map</span><span class="o">(</span><span class="k">_</span><span class="o">.</span><span class="n">label</span><span class="o">)</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">predictionAndLabels</span> <span class="k">=</span> <span class="o">(</span><span class="n">classProb</span> <span class="n">zip</span> <span class="n">labels</span><span class="o">).</span><span class="n">persist</span><span class="o">(</span><span class="nc">MEMORY_ONLY</span><span class="o">)</span>
+</span><span class='line'>    <span class="k">import</span> <span class="nn">org.apache.spark.mllib.evaluation.BinaryClassificationMetrics</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">metrics</span> <span class="k">=</span> <span class="k">new</span> <span class="nc">BinaryClassificationMetrics</span><span class="o">(</span><span class="n">predictionAndLabels</span><span class="o">)</span>
+</span><span class='line'>    <span class="c1">// AUPRC</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">auPRC</span> <span class="k">=</span> <span class="n">metrics</span><span class="o">.</span><span class="n">areaUnderPR</span>
+</span><span class='line'>    <span class="n">println</span><span class="o">(</span><span class="s">&quot;Area under precision-recall curve = &quot;</span> <span class="o">+</span> <span class="n">auPRC</span><span class="o">)</span>
+</span><span class='line'>    <span class="c1">// AUROC</span>
+</span><span class='line'>    <span class="k">val</span> <span class="n">auROC</span> <span class="k">=</span> <span class="n">metrics</span><span class="o">.</span><span class="n">areaUnderROC</span>
+</span><span class='line'>    <span class="n">println</span><span class="o">(</span><span class="s">&quot;Area under ROC = &quot;</span> <span class="o">+</span> <span class="n">auROC</span><span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p><em>Model Tuning</em><br/>
+GBT in Spark is based on J.H. Friedman&rsquo;s paper in 1999 - &ldquo;Stochastic Gradient Boosting.&rdquo; It trains a series of weakk classifiers, each tree is built on the pseudo residuals of the previous model, and finally the best model that minimizes the loss function will be selected.</p>
+
+<p><strong>categorical features</strong><br/>
+Before tuning the model, I set categorical features in <code>boostingStrategy.treeStrategy.categoricalFeaturesInfo</code>, there is some lift immediately:</p>
+
+<table>
+<thead>
+<tr>
+<th>cat. info        </th>
+<th>   AUPRC            </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>yes         </td>
+<td>  0.5085462235      </td>
+</tr>
+<tr>
+<td>no          </td>
+<td>  0.5094705132      </td>
+</tr>
+</tbody>
+</table>
+
+
+<p><strong>default configs:</strong><br/>
+There are different ways to configure gradient boosting algorithm, this <a href="http://machinelearningmastery.com/configure-gradient-boosting-algorithm/">post</a>, for instance, gives ideas based on different implementations.
+Basically there are two types of parameter to be tuned here – tree based and boosting parameters. Default configs are usually linked to internal implementation. In spark, <code>org.apache.spark.mllib.tree.configuration.BoostingStrategy</code> has the following default boosting parameters:</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'> <span class="n">numIterations</span><span class="k">:</span> <span class="kt">Int</span> <span class="o">=</span> <span class="mi">100</span><span class="o">,</span>
+</span><span class='line'> <span class="n">learningRate</span><span class="k">:</span> <span class="kt">Double</span> <span class="o">=</span> <span class="mf">0.1</span><span class="o">,</span>
+</span><span class='line'> <span class="n">validationTol</span><span class="k">:</span> <span class="kt">Double</span> <span class="o">=</span> <span class="mf">0.001</span>
+</span><span class='line'>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p></p>
+
+<p><strong>learning rate</strong><br/>
+Boosting parameters are mostly regularization techniques that reduce overfitting and penalize the complexities of the models. One strategy is giving a large <code>numIterations</code>, and then tune down the shrinkage parameter(or <code>learningRate</code>) to scale the contribution of each weak learner and achieve better result. It comes at the price of increasing training time. Lower learning rate requires more iterations, as rule of thumb for iterations >500, a smaller value of learning rate(&lt;0.1) gives much better generalizetion errors. However in my tests, Spark GBT runs much slower when iterations go up to 200(testing on 400 cpu cores). Below is my test result, clearly an appropriately higher learning rate for small iterations can also lift the scores:</p>
+
+<table>
+<thead>
+<tr>
+<th>Learning Rate  </th>
+<th>   AUPRC            </th>
+<th> AUROC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.05           </td>
+<td>   0.5030750757     </td>
+<td> 0.87685504</td>
+</tr>
+<tr>
+<td>0.1            </td>
+<td>   0.5094705132     </td>
+<td> 0.8802381335</td>
+</tr>
+<tr>
+<td>0.15           </td>
+<td>   0.5095999476     </td>
+<td> 0.8811939415</td>
+</tr>
+</tbody>
+</table>
+
+
+<p><strong>subsampling rate</strong><br/>
+Bagging is often used in Random Forest to reduce the variance, it can also be used in GBT(combined with learning rate). By using fraction of samples to fit the individual base learners, it is said to perform better than deterministic  boosting, that&rsquo;s also the idea of &ldquo;Stochastic Gradient Boosting&rdquo;. In the original paper(stochastic boosting), it&rsquo;s suggested subsampling rate around 0.4(or less than 1). However I didn&rsquo;t see this improvement in my test, the reason is probably because the number of iterations is not big enough(subsampling rate often interacts with num iterations):</p>
+
+<table>
+<thead>
+<tr>
+<th>Subsampling Rate  </th>
+<th>   AUPRC            </th>
+<th> AUROC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.4               </td>
+<td>   0.6965167027     </td>
+<td> 0.908289203</td>
+</tr>
+<tr>
+<td>0.8               </td>
+<td>   0.6972948047     </td>
+<td> 0.9086104967</td>
+</tr>
+<tr>
+<td>1.0               </td>
+<td>   0.7056956335     </td>
+<td> 0.9113023003</td>
+</tr>
+</tbody>
+</table>
+
+
+<p><strong>max depth of tree</strong>:<br/>
+GBTs generally train shallower trees compared to random forest. They have a smaller variance, and run many iterations to reduce the bias. Similar to RF, I chose the max depth based on number of samples, the more samples the deeper the tree. I used [15,20] for RF, and lowered range for GBT. Below is the testing result based on 10m training samples, clearly deeper trees helped when training large number of data:</p>
+
+<table>
+<thead>
+<tr>
+<th>Max Depth </th>
+<th>  Iterations   </th>
+<th> AUC-PR         </th>
+<th>    AUC-ROC</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>10        </td>
+<td>       100     </td>
+<td> 0.7056956335   </td>
+<td>  0.9113023003</td>
+</tr>
+<tr>
+<td>12        </td>
+<td>       100     </td>
+<td>0.7055160758    </td>
+<td>  0.9112645385</td>
+</tr>
+<tr>
+<td>12        </td>
+<td>       200     </td>
+<td>0.7124389723    </td>
+<td>  0.9139163337</td>
+</tr>
+<tr>
+<td>13        </td>
+<td>       100     </td>
+<td>0.7082843826    </td>
+<td>  0.9122832517</td>
+</tr>
+</tbody>
+</table>
+
+
+<p><strong>number of iterations</strong>:<br/>
+Increasing number of iterations reduces the error on training set, but setting it too high may lead to overfitting. An optimal value of iterations is often selected by monitoring prediction error on an independent validation data set. In GBT, it not only affects the model quality, but also the training time. I hit the the runtime bottleneck whening increasing number of iterations to 200.</p>
+
+<p>Spark has succesfully eliminates a lot of bottlencks, but introduces other new bottlenecks compared to many single-machine implementations including XGBoost. I captured the timelines from Web UI. At the beginning, schedule delay dominates the run time, clearly this is due to network latency and coordination between executors and drivers. <br/>
+<img class="left" src="http://taozhuo.github.io/images/timeline1.png"></p>
+
+<p>RandomForest:   init: 46.988458552<br/>
+  total: 259.506305596<br/>
+  findSplits: 22.73275623<br/>
+  findBestSplits: 212.461930748<br/>
+  chooseSplits: 211.908053401</p>
+
+<p>After a while, task deserialization time is getting longer. The reason is some big data objects are wrapped in the function closure when broadcasting to other executors. One way to improve this is use more cpu cores(e.g. 10 or 20) in each executor, because communication cost between threads is  much smaller than between executors.</p>
+
+<p><img class="right" src="http://taozhuo.github.io/images/timeline2.png"></p>
+
+<p>RandomForest:   init: 9.169380495<br/>
+  total: 100.28455719<br/>
+  findSplits: 2.750761187<br/>
+  findBestSplits: 91.051591324<br/>
+  chooseSplits: 90.761085741</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[How to Handle Categorical Features in Spark ML(Random Forest)]]></title>
@@ -50,7 +309,7 @@
 
 <p>However, you do it the easy way at the expense of the model quality. In my testing, it only reaches AUC-PR score of 0.45 compared to 0.49 in scikit-learn.</p>
 
-<p>Another way is build a pipeline that combines feature transformers and model estimators. We can use <code>VectorIndexer</code> to automatically identify categorical features based on threshold for the number of values a categorical feature can take. If a feature is found to have > maxCategories distinct values then it is declared continuous, otherwise it&rsquo;s declared categorical feature. By default it&rsquo;s 4, but you can try different values:</p>
+<p>Another way is build a pipeline that combines feature transformers and model estimators. We can use <code>VectorIndexer</code> to automatically identify categorical features based on threshold for the number of values a categorical feature can take. If a feature is found to have > maxCategories distinct values then it is declared continuous, otherwise it&rsquo;s declared categorical feature. By default it&rsquo;s 20, but you can try different values:</p>
 
 <figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
 <span class='line-number'>2</span>
