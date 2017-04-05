@@ -30,7 +30,7 @@ There are still several ways to handle categorical fetures. The easiest one is t
 
 However, you do it the easy way at the expense of the model quality. In my testing, it only reaches AUC-PR score of 0.45 compared to 0.49 in scikit-learn. 
 
-Another way is build a pipeline that combines feature transformers and model estimators. We can use `VectorIndexer` to automatically identify categorical features based on threshold for the number of values a categorical feature can take. If a feature is found to have > maxCategories distinct values then it is declared continuous, otherwise it's declared categorical feature. By default it's 4, but you can try different values:
+Another way is build a pipeline that combines feature transformers and model estimators. We can use `VectorIndexer` to automatically identify categorical features based on threshold for the number of values a categorical feature can take. If a feature is found to have > maxCategories distinct values then it is declared continuous, otherwise it's declared categorical feature. By default it's 20, but you can try different values:
 
 {% codeblock lang:scala %}
     val featureIndexer = new VectorIndexer()
