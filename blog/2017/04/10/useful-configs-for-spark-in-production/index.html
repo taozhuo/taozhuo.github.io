@@ -1,0 +1,252 @@
+
+<!DOCTYPE html>
+<!--[if IEMobile 7 ]><html class="no-js iem7"><![endif]-->
+<!--[if lt IE 9]><html class="no-js lte-ie8"><![endif]-->
+<!--[if (gt IE 8)|(gt IEMobile 7)|!(IEMobile)|!(IE)]><!--><html class="no-js" lang="en"><!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <title>Useful Configs for Spark in Production - Zhuo's Blog</title>
+  <meta name="author" content="Zhuo Tao">
+
+  
+  <meta name="description" content="spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version=2 Sometimes your Spark jobs finished all stages, but Web UI hangs there forever. The &hellip;">
+  
+
+  <!-- http://t.co/dKP3o1e -->
+  <meta name="HandheldFriendly" content="True">
+  <meta name="MobileOptimized" content="320">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  
+  <link rel="canonical" href="http://taozhuo.github.io/blog/2017/04/10/useful-configs-for-spark-in-production/">
+  <link href="/favicon.png" rel="icon">
+  <link href="/stylesheets/screen.css" media="screen, projection" rel="stylesheet" type="text/css">
+  <link href="/atom.xml" rel="alternate" title="Zhuo's Blog" type="application/atom+xml">
+  <link href="/stylesheets/data-table.css" media="screen, projection" rel="stylesheet" type="text/css" />  
+  <script src="/javascripts/modernizr-2.0.js"></script>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+  <script>!window.jQuery && document.write(unescape('%3Cscript src="/javascripts/libs/jquery.min.js"%3E%3C/script%3E'))</script>
+  <script src="/javascripts/octopress.js" type="text/javascript"></script>
+  <!--Fonts from Google"s Web font directory at http://google.com/webfonts -->
+<link href="//fonts.googleapis.com/css?family=PT+Serif:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+<link href="//fonts.googleapis.com/css?family=PT+Sans:regular,italic,bold,bolditalic" rel="stylesheet" type="text/css">
+
+  
+
+</head>
+
+<body   >
+  <header role="banner"><hgroup>
+  <h1><a href="/">Zhuo's Blog</a></h1>
+  
+    <h2>Big Data, Machine Learning, Spark, MapReduce, Hadoop</h2>
+  
+</hgroup>
+
+</header>
+  <nav role="navigation"><ul class="subscription" data-subscription="rss">
+  <li><a href="/atom.xml" rel="subscribe-rss" title="subscribe via RSS">RSS</a></li>
+  
+</ul>
+  
+<form action="https://www.google.com/search" method="get">
+  <fieldset role="search">
+    <input type="hidden" name="sitesearch" value="taozhuo.github.io">
+    <input class="search" type="text" name="q" results="0" placeholder="Search"/>
+  </fieldset>
+</form>
+  
+<ul class="main-navigation">
+  <li><a href="/">Blog</a></li>
+  <li><a href="/blog/archives">Archives</a></li>
+</ul>
+
+</nav>
+  <div id="main">
+    <div id="content">
+      <div>
+<article class="hentry" role="article">
+  
+  <header>
+    
+      <h1 class="entry-title">Useful Configs for Spark in Production</h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2017-04-10T11:07:21-07:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>11:07 am</span></time>
+        
+      </p>
+    
+  </header>
+
+
+<div class="entry-content"><p><code>spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version=2</code> Sometimes your Spark jobs finished all stages, but Web UI hangs there forever. The reason is if your job generates a lot of files to commit, and <code>commitTask</code> method will rename the temporary directories before <code>commitJob</code> merges every task output file into the final output folder, this process can be slow. At first I thought I can use <code>DirectParquetOutputCommitter</code> instead of default committer. However it is removed in 2.0 because speculation might cause loss of data:  <a href="https://issues.apache.org/jira/browse/SPARK-10063">SPARK-10063</a>. Then I found the root cause is that committer algo version is set to 1 by default in Hadoop, which sets the commit to single-threaded and waits until all tasks have completed. Change the version number to 2 so that this algorithm will reduce the output commit time for large jobs by having the tasks commit directly to the final output directory as they were completing.</p>
+
+<p><code>spark.yarn.executor.memoryOverhead=15360</code> This is the amount of OS overhead memory to be allocated to each executor. By default it&rsquo;s set to executorMemory * 0.10, but it&rsquo;s way too little when you want to shuffle large amount of data. Each task is fetching shuffle files over NIO channel. The buffers required are to be allocated from OS overheads. Give it a large number to make shuffling more stable.</p>
+
+<p><code>spark.executor.extraJavaOptions -XX:MaxDirectMemorySize=30g</code> Direct buffer memory is located within off-heap region, usually the limit of its size is small compare to heap size. When I run jobs that write parquet files with wide and complicated schema, I often see the following error. This is due to parquet snappy codec allocates large off-heap buffers for decompression:  <a href="https://issues.apache.org/jira/browse/SPARK-4073">SPARK-4073</a>. There are two ways to fix it, one is use Lzo compression codec, the other is set a much higher off heap memory limit.</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'><span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">spark</span><span class="o">.</span><span class="nc">SparkException</span><span class="k">:</span> <span class="kt">Task</span> <span class="kt">failed</span> <span class="kt">while</span> <span class="kt">writing</span> <span class="kt">rows</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">spark</span><span class="o">.</span><span class="n">sql</span><span class="o">.</span><span class="n">execution</span><span class="o">.</span><span class="n">datasources</span><span class="o">.</span><span class="nc">DefaultWriterContainer</span><span class="o">.</span><span class="n">writeRows</span><span class="o">(</span><span class="nc">WriterContainer</span><span class="o">.</span><span class="n">scala</span><span class="k">:</span><span class="err">261</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">spark</span><span class="o">.</span><span class="n">sql</span><span class="o">.</span><span class="n">execution</span><span class="o">.</span><span class="n">datasources</span><span class="o">.</span><span class="nc">InsertIntoHadoopFsRelationCommand$$anonfun$run$1$$anonfun$apply$mcV$sp$1</span><span class="o">.</span><span class="n">apply</span><span class="o">(</span><span class="nc">InsertIntoHadoopFsRelationCommand</span><span class="o">.</span><span class="n">scala</span><span class="k">:</span><span class="err">143</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">spark</span><span class="o">.</span><span class="n">sql</span><span class="o">.</span><span class="n">execution</span><span class="o">.</span><span class="n">datasources</span><span class="o">.</span><span class="nc">InsertIntoHadoopFsRelationCommand$$anonfun$run$1$$anonfun$apply$mcV$sp$1</span><span class="o">.</span><span class="n">apply</span><span class="o">(</span><span class="nc">InsertIntoHadoopFsRelationCommand</span><span class="o">.</span><span class="n">scala</span><span class="k">:</span><span class="err">143</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">spark</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="nc">ResultTask</span><span class="o">.</span><span class="n">runTask</span><span class="o">(</span><span class="nc">ResultTask</span><span class="o">.</span><span class="n">scala</span><span class="k">:</span><span class="err">70</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">spark</span><span class="o">.</span><span class="n">scheduler</span><span class="o">.</span><span class="nc">Task</span><span class="o">.</span><span class="n">run</span><span class="o">(</span><span class="nc">Task</span><span class="o">.</span><span class="n">scala</span><span class="k">:</span><span class="err">86</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">spark</span><span class="o">.</span><span class="n">executor</span><span class="o">.</span><span class="nc">Executor$TaskRunner</span><span class="o">.</span><span class="n">run</span><span class="o">(</span><span class="nc">Executor</span><span class="o">.</span><span class="n">scala</span><span class="k">:</span><span class="err">274</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">java</span><span class="o">.</span><span class="n">util</span><span class="o">.</span><span class="n">concurrent</span><span class="o">.</span><span class="nc">ThreadPoolExecutor</span><span class="o">.</span><span class="n">runWorker</span><span class="o">(</span><span class="nc">ThreadPoolExecutor</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">1145</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">java</span><span class="o">.</span><span class="n">util</span><span class="o">.</span><span class="n">concurrent</span><span class="o">.</span><span class="nc">ThreadPoolExecutor$Worker</span><span class="o">.</span><span class="n">run</span><span class="o">(</span><span class="nc">ThreadPoolExecutor</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">615</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">java</span><span class="o">.</span><span class="n">lang</span><span class="o">.</span><span class="nc">Thread</span><span class="o">.</span><span class="n">run</span><span class="o">(</span><span class="nc">Thread</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">745</span><span class="o">)</span>
+</span><span class='line'><span class="nc">Caused</span> <span class="n">by</span><span class="k">:</span> <span class="kt">java.lang.OutOfMemoryError:</span> <span class="kt">Direct</span> <span class="kt">buffer</span> <span class="kt">memory</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">java</span><span class="o">.</span><span class="n">nio</span><span class="o">.</span><span class="nc">Bits</span><span class="o">.</span><span class="n">reserveMemory</span><span class="o">(</span><span class="nc">Bits</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">658</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">java</span><span class="o">.</span><span class="n">nio</span><span class="o">.</span><span class="nc">DirectByteBuffer</span><span class="o">.&lt;</span><span class="n">init</span><span class="o">&gt;(</span><span class="nc">DirectByteBuffer</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">123</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">java</span><span class="o">.</span><span class="n">nio</span><span class="o">.</span><span class="nc">ByteBuffer</span><span class="o">.</span><span class="n">allocateDirect</span><span class="o">(</span><span class="nc">ByteBuffer</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">306</span><span class="o">)</span>
+</span><span class='line'>  <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">parquet</span><span class="o">.</span><span class="n">hadoop</span><span class="o">.</span><span class="n">codec</span><span class="o">.</span><span class="nc">SnappyCompressor</span><span class="o">.</span><span class="n">setInput</span><span class="o">(</span><span class="nc">SnappyCompressor</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">97</span><span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p><code>dfs.datanode.socket.write.timeout=3000000</code>, <code>dfs.socket.timeout=3000000</code>. When connection to datanode is bad, saving parquet files into HDFS sometimes gives you errors like the following. You can fix it by setting a higher datanode socket write timeout in Hadoop settings.</p>
+
+<figure class='code'><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='scala'><span class='line'> <span class="nc">Suppressed</span><span class="k">:</span> <span class="kt">java.io.IOException:</span> <span class="kt">The</span> <span class="kt">file</span> <span class="kt">being</span> <span class="kt">written</span> <span class="kt">is</span> <span class="kt">in</span> <span class="kt">an</span> <span class="kt">invalid</span> <span class="kt">state.</span> <span class="kt">Probably</span> <span class="kt">caused</span> <span class="kt">by</span> <span class="kt">an</span> <span class="kt">error</span> <span class="kt">thrown</span> <span class="kt">previously.</span> <span class="kt">Current</span> <span class="kt">state:</span> <span class="kt">COLUMN</span>
+</span><span class='line'> <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">parquet</span><span class="o">.</span><span class="n">hadoop</span><span class="o">.</span><span class="nc">ParquetFileWriter$STATE</span><span class="o">.</span><span class="n">error</span><span class="o">(</span><span class="nc">ParquetFileWriter</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">146</span><span class="o">)</span>
+</span><span class='line'> <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">parquet</span><span class="o">.</span><span class="n">hadoop</span><span class="o">.</span><span class="nc">ParquetFileWriter$STATE</span><span class="o">.</span><span class="n">startBlock</span><span class="o">(</span><span class="nc">ParquetFileWriter</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">138</span><span class="o">)</span>
+</span><span class='line'> <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">parquet</span><span class="o">.</span><span class="n">hadoop</span><span class="o">.</span><span class="nc">ParquetFileWriter</span><span class="o">.</span><span class="n">startBlock</span><span class="o">(</span><span class="nc">ParquetFileWriter</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">195</span><span class="o">)</span>
+</span><span class='line'> <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">parquet</span><span class="o">.</span><span class="n">hadoop</span><span class="o">.</span><span class="nc">InternalParquetRecordWriter</span><span class="o">.</span><span class="n">flushRowGroupToStore</span><span class="o">(</span><span class="nc">InternalParquetRecordWriter</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">153</span><span class="o">)</span>
+</span><span class='line'> <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">parquet</span><span class="o">.</span><span class="n">hadoop</span><span class="o">.</span><span class="nc">InternalParquetRecordWriter</span><span class="o">.</span><span class="n">close</span><span class="o">(</span><span class="nc">InternalParquetRecordWriter</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">113</span><span class="o">)</span>
+</span><span class='line'> <span class="n">at</span> <span class="n">org</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">parquet</span><span class="o">.</span><span class="n">hadoop</span><span class="o">.</span><span class="nc">ParquetRecordWriter</span><span class="o">.</span><span class="n">close</span><span class="o">(</span><span class="nc">ParquetRecordWriter</span><span class="o">.</span><span class="n">java</span><span class="k">:</span><span class="err">112</span><span class="o">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>There are a lot of other timeouts in Spark configs, often times we trade off some performance for higher reliability. e.g. set <code>spark.executor.heartbeatInterval=120s</code> and <code>spark.network.timeout=600s</code> if you are running different workloads such as Pig/MapReduce or ad-hoc data science jobs on a busy Yarn cluster, as they have unpredictable impact on the networking condition. Just be careful some of the timeouts follow some rules, e.g. <code>heartbeatInterval</code> should be significantly less than <code>spark.network.timeout</code>, otherwise you will see strange errors.</p>
+</div>
+
+
+  <footer>
+    <p class="meta">
+      
+  
+
+<span class="byline author vcard">Posted by <span class="fn">Zhuo Tao</span></span>
+
+      
+
+
+
+
+<time class='entry-date' datetime='2017-04-10T11:07:21-07:00'><span class='date'><span class='date-month'>Apr</span> <span class='date-day'>10</span><span class='date-suffix'>th</span>, <span class='date-year'>2017</span></span> <span class='time'>11:07 am</span></time>
+      
+
+
+    </p>
+    
+      <div class="sharing">
+  
+  <a href="//twitter.com/share" class="twitter-share-button" data-url="http://taozhuo.github.io/blog/2017/04/10/useful-configs-for-spark-in-production/" data-via="" data-counturl="http://taozhuo.github.io/blog/2017/04/10/useful-configs-for-spark-in-production/" >Tweet</a>
+  
+  
+  
+</div>
+
+    
+    <p class="meta">
+      
+        <a class="basic-alignment left" href="/blog/2017/02/27/how-to-tune-gradient-boosted-trees-in-spark/" title="Previous Post: How to Tune Gradient-Boosted Trees in Spark">&laquo; How to Tune Gradient-Boosted Trees in Spark</a>
+      
+      
+    </p>
+  </footer>
+</article>
+
+</div>
+
+<aside class="sidebar">
+  
+    <section>
+  <h1>Recent Posts</h1>
+  <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2017/04/10/useful-configs-for-spark-in-production/">Useful Configs for Spark in Production</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2017/02/27/how-to-tune-gradient-boosted-trees-in-spark/">How to Tune Gradient-Boosted Trees in Spark</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2017/02/08/how-to-handle-categorical-features-in-spark-ml/">How to Handle Categorical Features in Spark ML(Random Forest)</a>
+      </li>
+    
+      <li class="post">
+        <a href="/blog/2017/01/08/bloom-filter-join-in-spark/">Bloom-filter Join in Spark</a>
+      </li>
+    
+  </ul>
+</section>
+
+
+
+
+
+  
+</aside>
+
+
+    </div>
+  </div>
+  <footer role="contentinfo"><p>
+  Copyright &copy; 2017 - Zhuo Tao -
+  <span class="credit">Powered by <a href="http://octopress.org">Octopress</a></span>
+</p>
+
+</footer>
+  
+
+
+
+
+
+
+
+  <script type="text/javascript">
+    (function(){
+      var twitterWidgets = document.createElement('script');
+      twitterWidgets.type = 'text/javascript';
+      twitterWidgets.async = true;
+      twitterWidgets.src = '//platform.twitter.com/widgets.js';
+      document.getElementsByTagName('head')[0].appendChild(twitterWidgets);
+    })();
+  </script>
+
+
+
+
+
+</body>
+</html>
